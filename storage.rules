@@ -1,0 +1,54 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isSignedIn() && (
+        request.auth.uid == 'PqXqqCgdC1eYPz4HKHHLtDRejPD3' ||
+        (
+          request.auth.token.email != null &&
+          request.auth.token.email.lower() == 'khyhajmr08@gmail.com' &&
+          request.auth.token.email_verified == true
+        )
+      );
+    }
+
+    function validPublicImageUpload(maxBytes) {
+      return request.resource != null &&
+        request.resource.size > 0 && request.resource.size <= maxBytes &&
+        request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
+    }
+
+    // Publicly displayed service imagery: only the trusted owner can modify it.
+    match /services/{fileName} {
+      allow read: if true;
+      allow create, update: if isOwner() && validPublicImageUpload(8 * 1024 * 1024);
+      allow delete: if isOwner();
+    }
+
+    // Publicly displayed promotional imagery: only the trusted owner can modify it.
+    match /posts/{fileName} {
+      allow read: if true;
+      allow create, update: if isOwner() && validPublicImageUpload(8 * 1024 * 1024);
+      allow delete: if isOwner();
+    }
+
+    // Payment proofs are stored under the authenticated customer's own UID.
+    // They are not generally readable by anonymous users through the SDK.
+    match /order-receipts/{userId}/{fileName} {
+      allow read: if isOwner() || (isSignedIn() && request.auth.uid == userId);
+      allow create, update: if isSignedIn() && request.auth.uid == userId &&
+        validPublicImageUpload(8 * 1024 * 1024);
+      allow delete: if isOwner();
+    }
+
+    // No broad catch-all write/read grants. Add future paths only with explicit
+    // ownership, size, and content-type rules after inspecting their code usage.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

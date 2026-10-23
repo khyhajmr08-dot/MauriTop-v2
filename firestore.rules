@@ -1,0 +1,277 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // A profile field such as users/{uid}.role is user-editable data and must
+    // never grant administrative authority. Use only the existing trusted
+    // owner UID or a verified owner email from the Firebase Auth token.
+    function isOwner() {
+      return isSignedIn() && (
+        request.auth.uid == 'PqXqqCgdC1eYPz4HKHHLtDRejPD3' ||
+        (
+          request.auth.token.email != null &&
+          request.auth.token.email.lower() == 'khyhajmr08@gmail.com' &&
+          request.auth.token.email_verified == true
+        )
+      );
+    }
+
+    function hasOnlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function validNewUser(userId) {
+      return isSignedIn() && request.auth.uid == userId &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'name', 'displayName', 'email', 'photoURL', 'avatarUrl',
+          'phone', 'phoneNumber', 'role', 'blocked', 'isVerified',
+          'reviewStatus', 'loyaltyPoints', 'points', 'referralsCount',
+          'referralCount', 'referralEarnings', 'isReferralRewarded',
+          'referralCode', 'referredBy', 'createdAt', 'updatedAt',
+          'fcmToken', 'fcmTokens', 'notificationsEnabled', 'lastLogin',
+          'lastIP', 'lastDevice', 'lastBrowser', 'sessionActive'
+        ]) &&
+        request.resource.data.uid == userId &&
+        (!('email' in request.resource.data) || request.resource.data.email == request.auth.token.email) &&
+        (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+        (!('blocked' in request.resource.data) || request.resource.data.blocked == false) &&
+        (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) &&
+        (!('kyc_completed' in request.resource.data) || request.resource.data.kyc_completed == false) &&
+        (!('reviewStatus' in request.resource.data) || request.resource.data.reviewStatus == 'Active') &&
+        (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0) &&
+        (!('points' in request.resource.data) || request.resource.data.points == 0) &&
+        (!('referralsCount' in request.resource.data) || request.resource.data.referralsCount == 0) &&
+        (!('referralCount' in request.resource.data) || request.resource.data.referralCount == 0) &&
+        (!('referralEarnings' in request.resource.data) || request.resource.data.referralEarnings == 0) &&
+        (!('isReferralRewarded' in request.resource.data) || request.resource.data.isReferralRewarded == false);
+    }
+
+    function selfProfileUpdate(userId) {
+      return isSignedIn() && request.auth.uid == userId &&
+        hasOnlyChanged([
+          'name', 'displayName', 'phone', 'phoneNumber', 'photoURL', 'avatarUrl',
+          'updatedAt', 'fcmToken', 'fcmTokens', 'notificationsEnabled',
+          'lastLogin', 'lastIP', 'lastDevice', 'lastBrowser', 'sessionActive'
+        ]);
+    }
+
+    function validKycPayload(userId) {
+      return isSignedIn() && request.auth.uid == userId &&
+        request.resource.data.userId == userId &&
+        request.resource.data.userEmail == request.auth.token.email &&
+        request.resource.data.kyc_full_name is string && request.resource.data.kyc_full_name.size() >= 2 &&
+        request.resource.data.kyc_phone is string && request.resource.data.kyc_phone.size() >= 8 &&
+        request.resource.data.kyc_id_type is string &&
+        request.resource.data.kyc_id_number is string && request.resource.data.kyc_id_number.size() >= 3 &&
+        request.resource.data.kyc_id_image is string && request.resource.data.kyc_id_image.size() < 800000 &&
+        request.resource.data.kyc_city is string &&
+        request.resource.data.kyc_address_gps is string &&
+        request.resource.data.kyc_completed == false &&
+        request.resource.data.reviewStatus == 'Under Review';
+    }
+
+    function validKycRequestCreate(userId) {
+      return request.resource.data.keys().hasOnly([
+        'userId', 'userEmail', 'kyc_full_name', 'kyc_phone', 'kyc_id_type',
+        'kyc_id_number', 'kyc_id_image', 'kyc_city', 'kyc_address_gps',
+        'kyc_completed', 'reviewStatus', 'kyc_submitted_at'
+      ]) && validKycPayload(userId);
+    }
+
+    function selfKycSubmission(userId) {
+      return isSignedIn() && request.auth.uid == userId &&
+        (!('isVerified' in resource.data) || resource.data.isVerified != true) &&
+        hasOnlyChanged([
+          'userId', 'userEmail', 'kyc_full_name', 'kyc_phone', 'kyc_id_type',
+          'kyc_id_number', 'kyc_id_image', 'kyc_city', 'kyc_address_gps',
+          'kyc_completed', 'reviewStatus', 'kyc_submitted_at'
+        ]) && validKycPayload(userId);
+    }
+
+    // A withdrawal and the corresponding points reservation must be committed
+    // atomically. This prevents changing loyaltyPoints in a standalone write.
+    function validWithdrawalReservation(userId) {
+      return isSignedIn() && request.auth.uid == userId &&
+        hasOnlyChanged(['loyaltyPoints', 'lastWithdrawalRequestId', 'updatedAt']) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasAll(['loyaltyPoints', 'lastWithdrawalRequestId']) &&
+        request.resource.data.lastWithdrawalRequestId is string &&
+        existsAfter(/databases/$(database)/documents/withdrawals/$(request.resource.data.lastWithdrawalRequestId)) &&
+        getAfter(/databases/$(database)/documents/withdrawals/$(request.resource.data.lastWithdrawalRequestId)).data.userId == userId &&
+        getAfter(/databases/$(database)/documents/withdrawals/$(request.resource.data.lastWithdrawalRequestId)).data.status == 'pending' &&
+        getAfter(/databases/$(database)/documents/withdrawals/$(request.resource.data.lastWithdrawalRequestId)).data.amount is number &&
+        resource.data.loyaltyPoints is number &&
+        request.resource.data.loyaltyPoints is number &&
+        request.resource.data.loyaltyPoints == resource.data.loyaltyPoints -
+          getAfter(/databases/$(database)/documents/withdrawals/$(request.resource.data.lastWithdrawalRequestId)).data.amount;
+    }
+
+    function validWithdrawalCreate(withdrawalId) {
+      return isSignedIn() &&
+        request.resource.data.keys().hasOnly([
+          'userId', 'userName', 'userEmail', 'amount', 'bankilyPhone',
+          'status', 'createdAt', 'adminNote'
+        ]) &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.amount is number && request.resource.data.amount >= 500 &&
+        request.resource.data.amount <= 10000000 &&
+        request.resource.data.bankilyPhone is string && request.resource.data.bankilyPhone.size() >= 8 &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.adminNote == '' &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.loyaltyPoints is number &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastWithdrawalRequestId == withdrawalId &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.loyaltyPoints == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.loyaltyPoints - request.resource.data.amount;
+    }
+
+    function validOrderCreate() {
+      return isSignedIn() &&
+        request.resource.data.keys().hasOnly([
+          'userId', 'userName', 'userEmail', 'serviceId', 'serviceType',
+          'amount', 'fee', 'total', 'accountDetails', 'fields', 'status',
+          'proofImageUrl', 'proofUrl', 'paymentMethod', 'senderPhone',
+          'senderRef', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.userEmail == request.auth.token.email &&
+        request.resource.data.userName is string && request.resource.data.userName.size() > 0 && request.resource.data.userName.size() <= 120 &&
+        request.resource.data.serviceId is string && request.resource.data.serviceId.size() > 0 && request.resource.data.serviceId.size() <= 160 &&
+        request.resource.data.serviceType is string && request.resource.data.serviceType.size() <= 160 &&
+        request.resource.data.amount is number && request.resource.data.amount >= 0 && request.resource.data.amount <= 10000000 &&
+        request.resource.data.fee is number && request.resource.data.fee >= 0 &&
+        request.resource.data.total is number && request.resource.data.total == request.resource.data.amount + request.resource.data.fee &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.paymentMethod is string &&
+        request.resource.data.proofImageUrl is string &&
+        request.resource.data.proofUrl is string &&
+        request.resource.data.proofImageUrl == request.resource.data.proofUrl &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time &&
+        request.resource.data.accountDetails is string && request.resource.data.accountDetails.size() <= 4000 &&
+        request.resource.data.fields is map && request.resource.data.fields.size() <= 30 &&
+        request.resource.data.senderRef is string && request.resource.data.senderRef.size() <= 256 &&
+        (
+          (request.resource.data.paymentMethod == 'quote' && request.resource.data.amount == 0 && request.resource.data.proofImageUrl == '') ||
+          (
+            request.resource.data.paymentMethod in ['bankily', 'sadad'] &&
+            request.resource.data.amount > 0 &&
+            request.resource.data.senderPhone is string && request.resource.data.senderPhone.size() >= 8 &&
+            request.resource.data.proofImageUrl.matches('https://firebasestorage.googleapis.com/.*')
+          )
+        );
+    }
+
+    function validVisitorWrite(sessionId) {
+      return request.resource.data.keys().hasOnly([
+          'sessionId', 'userId', 'email', 'name', 'phone', 'isRegistered',
+          'device', 'userAgent', 'lastActive', 'path'
+        ]) &&
+        request.resource.data.sessionId == sessionId &&
+        request.resource.data.path is string && request.resource.data.path.size() <= 512 &&
+        request.resource.data.device in ['Mobile', 'Desktop'] &&
+        request.resource.data.userAgent is string && request.resource.data.userAgent.size() <= 1024 &&
+        request.resource.data.lastActive == request.time &&
+        request.resource.data.isRegistered == isSignedIn() &&
+        (isSignedIn() ? request.resource.data.userId == request.auth.uid : request.resource.data.userId == null) &&
+        (isSignedIn() ? request.resource.data.email == request.auth.token.email : request.resource.data.email == null) &&
+        (!('name' in request.resource.data) || request.resource.data.name == null || (request.resource.data.name is string && request.resource.data.name.size() <= 120)) &&
+        (!('phone' in request.resource.data) || request.resource.data.phone == null || (request.resource.data.phone is string && request.resource.data.phone.size() <= 32));
+    }
+
+    // Public service catalog; all modifications belong to the trusted owner.
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create, update, delete: if isOwner();
+    }
+
+    // User data and sensitive identity documents are private by default.
+    match /users/{userId} {
+      allow get: if isOwner() || (isSignedIn() && request.auth.uid == userId);
+      allow list: if isOwner();
+      allow create: if isOwner() || validNewUser(userId);
+      allow update: if isOwner() || selfProfileUpdate(userId) || selfKycSubmission(userId) || validWithdrawalReservation(userId);
+      allow delete: if isOwner();
+    }
+
+    match /orders/{orderId} {
+      allow get, list: if isOwner() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if validOrderCreate();
+      allow update, delete: if isOwner();
+    }
+
+    match /notifications/{notificationId} {
+      allow get, list: if isOwner() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isOwner();
+      allow update: if isOwner() || (
+        isSignedIn() && resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+        request.resource.data.read is bool
+      );
+      allow delete: if isOwner() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Only these two settings documents are currently intended for public reads.
+    // Do not store private credentials or server secrets in either document.
+    match /settings/global {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+    match /settings/payment_methods {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+    match /settings/{otherSettingId} {
+      allow read, write: if isOwner();
+    }
+
+    // Customers see published offers only; the owner may manage drafts and all posts.
+    match /posts/{postId} {
+      allow get, list: if isOwner() || resource.data.status == 'approved';
+      allow create, update, delete: if isOwner();
+    }
+
+    // Withdrawal points are reserved atomically with creation of a pending request.
+    match /withdrawals/{withdrawalId} {
+      allow get, list: if isOwner() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if validWithdrawalCreate(withdrawalId);
+      allow update, delete: if isOwner();
+    }
+
+    // KYC submissions are private; only the owner can list/review all requests.
+    match /kyc_requests/{userId} {
+      allow get: if isOwner() || (isSignedIn() && request.auth.uid == userId);
+      allow list: if isOwner();
+      allow create: if isOwner() || validKycRequestCreate(userId);
+      allow update: if isOwner() || selfKycSubmission(userId);
+      allow delete: if isOwner();
+    }
+
+    match /transactions/{transactionId} {
+      allow get, list: if isOwner() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if isOwner();
+    }
+
+    match /requests/{requestId} {
+      allow read, write: if isOwner();
+    }
+
+    match /admin_logs/{logId} {
+      allow read, write: if isOwner();
+    }
+
+    // Visitor telemetry is untrusted, bounded, and readable only by the owner.
+    match /active_visitors/{sessionId} {
+      allow get, list: if isOwner();
+      allow create, update: if validVisitorWrite(sessionId);
+      allow delete: if isOwner();
+    }
+
+    // Default deny for every collection not explicitly covered above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
