@@ -1,0 +1,285 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The owner identity is fixed here; an editable users/{uid}.role field is never authority.
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'khyhajmr08@gmail.com') ||
+        request.auth.uid == 'PqXqqCgdC1eYPz4HKHHLtDRejPD3'
+      );
+    }
+
+    function hasPermission(permission) {
+      return isAdmin() || (isSignedIn() &&
+        exists(/databases/$(database)/documents/adminMembers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminMembers/$(request.auth.uid)).data.active == true &&
+        get(/databases/$(database)/documents/adminMembers/$(request.auth.uid)).data.permissions[permission] == true
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function orderMatchesService(serviceId) {
+      let servicePath = /databases/$(database)/documents/services/$(serviceId);
+      let serviceSnapshot = get(servicePath);
+      let serviceData = serviceSnapshot.data;
+      return serviceSnapshot.exists() &&
+        (!('status' in serviceData) || serviceData.status in ['active', 'نشط', 'enabled', 'published', 'متاح']) &&
+        (
+          (('pricingMode' in serviceData) && serviceData.pricingMode == 'quote' && request.resource.data.amount == 0 && request.resource.data.total == 0) ||
+          ((!('pricingMode' in serviceData) || serviceData.pricingMode != 'quote') &&
+            request.resource.data.amount > 0 &&
+            request.resource.data.total == request.resource.data.amount + request.resource.data.fee &&
+            (!('minAmountMru' in serviceData) || request.resource.data.amount >= serviceData.minAmountMru) &&
+            (!('maxAmountMru' in serviceData) || serviceData.maxAmountMru <= 0 || request.resource.data.amount <= serviceData.maxAmountMru)
+          )
+        );
+    }
+
+    function userLoyaltyPoints(userId) {
+      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
+      return ('loyaltyPoints' in userData && userData.loyaltyPoints is number) ? userData.loyaltyPoints : (('points' in userData && userData.points is number) ? userData.points : 0);
+    }
+
+    function protectsUserManagedFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'role', 'isAdmin', 'admin', 'blocked',
+        'balance', 'walletBalance', 'loyaltyPoints', 'points',
+        'referralsCount', 'referralCount', 'referralEarnings', 'isReferralRewarded',
+        'signupReferralRewarded', 'signupReferralRewardedAt',
+        'isVerified', 'reviewStatus', 'verificationStatus',
+        'phoneStatus', 'phoneRejectReason', 'totalSpent',
+        'kyc_full_name', 'kyc_phone', 'kyc_id_type', 'kyc_id_number',
+        'kyc_id_image', 'kyc_id_image_path', 'kyc_city', 'kyc_address_gps',
+        'kyc_submitted_at', 'kyc_completed', 'verifiedAt', 'blockReason'
+      ]);
+    }
+
+    function isSafeKycSubmission() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'kyc_full_name', 'kyc_phone', 'kyc_id_type', 'kyc_id_number',
+          'kyc_id_image', 'kyc_id_image_path', 'kyc_city', 'kyc_address_gps',
+          'kyc_completed', 'reviewStatus', 'kyc_submitted_at', 'isVerified', 'blockReason'
+        ]) &&
+        request.resource.data.reviewStatus == 'Under Review' &&
+        request.resource.data.kyc_completed == false &&
+        (!('blockReason' in request.resource.data) || request.resource.data.blockReason == '') &&
+        (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) &&
+        request.resource.data.kyc_full_name is string && request.resource.data.kyc_full_name.size() > 0 && request.resource.data.kyc_full_name.size() <= 120 &&
+        request.resource.data.kyc_phone is string && request.resource.data.kyc_phone.size() <= 32 &&
+        request.resource.data.kyc_id_type is string && request.resource.data.kyc_id_type.size() <= 40 &&
+        request.resource.data.kyc_id_number is string && request.resource.data.kyc_id_number.size() > 0 && request.resource.data.kyc_id_number.size() <= 80 &&
+        request.resource.data.kyc_id_image is string && request.resource.data.kyc_id_image.size() <= 4096 &&
+        request.resource.data.kyc_id_image_path is string && request.resource.data.kyc_id_image_path.matches('^kyc/' + request.auth.uid + '/identity-[0-9]+[.](jpg|png|webp)$') &&
+        request.resource.data.kyc_city is string && request.resource.data.kyc_city.size() <= 120 &&
+        request.resource.data.kyc_address_gps is string && request.resource.data.kyc_address_gps.size() <= 300 &&
+        request.resource.data.kyc_submitted_at is string;
+    }
+
+    // Service catalog is public to read; only a trusted administrator may mutate it.
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create, update, delete: if hasPermission("manageServices");
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+
+      allow create: if isAdmin() || (
+        isOwner(userId) &&
+        (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+        (!('blocked' in request.resource.data) || request.resource.data.blocked == false) &&
+        (!('loyaltyPoints' in request.resource.data) || request.resource.data.loyaltyPoints == 0) &&
+        (!('points' in request.resource.data) || request.resource.data.points == 0) &&
+        (!('balance' in request.resource.data) || request.resource.data.balance == 0) &&
+        (!('walletBalance' in request.resource.data) || request.resource.data.walletBalance == 0) &&
+        (!('referralsCount' in request.resource.data) || request.resource.data.referralsCount == 0) &&
+        (!('referralCount' in request.resource.data) || request.resource.data.referralCount == 0) &&
+        (!('referralEarnings' in request.resource.data) || request.resource.data.referralEarnings == 0) &&
+        (!('isReferralRewarded' in request.resource.data) || request.resource.data.isReferralRewarded == false) &&
+        (!('signupReferralRewarded' in request.resource.data) || request.resource.data.signupReferralRewarded == false) &&
+        (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) &&
+        (!('kyc_completed' in request.resource.data) || request.resource.data.kyc_completed == false) &&
+        (!('reviewStatus' in request.resource.data) || request.resource.data.reviewStatus == 'Not Submitted') &&
+        (!('verifiedAt' in request.resource.data) || request.resource.data.verifiedAt == null) &&
+        (!('blockReason' in request.resource.data) || request.resource.data.blockReason == '')
+      );
+
+      allow update: if isAdmin() || (isOwner(userId) && (protectsUserManagedFields() || isSafeKycSubmission()));
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAdmin() || hasPermission("viewOrders") || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.serviceId is string &&
+        request.resource.data.serviceId.size() > 0 &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount >= 0 &&
+        request.resource.data.total is number &&
+        request.resource.data.total >= 0 &&
+        request.resource.data.fee is number &&
+        request.resource.data.fee >= 0 &&
+        request.resource.data.total == request.resource.data.amount + request.resource.data.fee &&
+        orderMatchesService(request.resource.data.serviceId) &&
+        request.resource.data.paymentMethod in ['bankily', 'sadad', 'quote'] &&
+        request.resource.data.fields is map && request.resource.data.fields.size() <= 20 &&
+        request.resource.data.keys().hasOnly([
+          'userId', 'serviceId', 'serviceType',
+          'amount', 'fee', 'total', 'accountDetails', 'fields', 'status',
+          'proofImageUrl', 'proofUrl', 'receiptStoragePath', 'paymentMethod',
+          'senderPhone', 'senderRef', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.accountDetails is string && request.resource.data.accountDetails.size() <= 4000 &&
+        request.resource.data.senderPhone is string && request.resource.data.senderPhone.size() <= 20 &&
+        request.resource.data.receiptStoragePath is string && request.resource.data.receiptStoragePath.size() <= 512 &&
+        request.resource.data.proofImageUrl is string && request.resource.data.proofImageUrl.size() <= 4096 &&
+        request.resource.data.proofUrl is string && request.resource.data.proofUrl.size() <= 4096
+      );
+      allow update: if isAdmin() || (hasPermission("processOrders") &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'adminNote', 'rejectionReason', 'updatedAt', 'pinCode', 'completedAt'
+        ]) &&
+        request.resource.data.status in ['pending', 'approved', 'shipped', 'rejected'] &&
+        (
+          request.resource.data.status == resource.data.status ||
+          (resource.data.status == 'pending' && request.resource.data.status in ['approved', 'rejected']) ||
+          (resource.data.status == 'approved' && request.resource.data.status in ['shipped', 'rejected'])
+        ) &&
+        (!('adminNote' in request.resource.data) || request.resource.data.adminNote == null || (request.resource.data.adminNote is string && request.resource.data.adminNote.size() <= 1000)) &&
+        (!('rejectionReason' in request.resource.data) || request.resource.data.rejectionReason == null || (request.resource.data.rejectionReason is string && request.resource.data.rejectionReason.size() <= 1000)) &&
+        (!('pinCode' in request.resource.data) || (request.resource.data.pinCode is string && request.resource.data.pinCode.size() <= 200))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount >= 500 &&
+        request.resource.data.amount <= userLoyaltyPoints(request.auth.uid) &&
+        request.resource.data.pointsDeductedAtRequest == false &&
+        request.resource.data.bankilyPhone is string &&
+        request.resource.data.bankilyPhone.matches('^[0-9]{8}$') &&
+        request.resource.data.keys().hasOnly([
+          'userId', 'userName', 'userEmail', 'amount', 'bankilyPhone',
+          'status', 'pointsDeductedAtRequest', 'createdAt', 'adminNote'
+        ]);
+      allow update, delete: if isAdmin();
+    }
+
+    // KYC data is private: the owner may submit a pending request, while only admins may review it.
+    match /kyc_requests/{userId} {
+      allow read: if isAdmin() || isOwner(userId);
+      allow create, update: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.reviewStatus == 'Under Review' &&
+        request.resource.data.kyc_completed == false &&
+        (!('blockReason' in request.resource.data) || request.resource.data.blockReason == '') &&
+        (!('isVerified' in request.resource.data) || request.resource.data.isVerified == false) &&
+        request.resource.data.kyc_full_name is string && request.resource.data.kyc_full_name.size() > 0 && request.resource.data.kyc_full_name.size() <= 120 &&
+        request.resource.data.kyc_id_number is string && request.resource.data.kyc_id_number.size() > 0 && request.resource.data.kyc_id_number.size() <= 80 &&
+        request.resource.data.kyc_id_image is string && request.resource.data.kyc_id_image.size() <= 4096 &&
+        request.resource.data.kyc_id_image_path is string && request.resource.data.kyc_id_image_path.matches('^kyc/' + request.auth.uid + '/identity-[0-9]+[.](jpg|png|webp)$') &&
+        request.resource.data.keys().hasOnly([
+          'userId', 'userEmail', 'kyc_full_name', 'kyc_phone', 'kyc_id_type',
+          'kyc_id_number', 'kyc_id_image', 'kyc_id_image_path', 'kyc_city',
+          'kyc_address_gps', 'kyc_completed', 'isVerified', 'reviewStatus',
+          'kyc_submitted_at', 'verifiedAt', 'blockReason'
+        ])
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAdmin() || (isSignedIn() && (
+        resource.data.uid == request.auth.uid || resource.data.userId == request.auth.uid
+      ));
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /requests/{requestId} {
+      allow read: if isAdmin() || (isSignedIn() && (
+        resource.data.uid == request.auth.uid || resource.data.userId == request.auth.uid
+      ));
+      allow create: if isSignedIn() &&
+        (request.resource.data.uid == request.auth.uid || request.resource.data.userId == request.auth.uid) &&
+        request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (hasPermission('processOrders') &&
+        request.resource.data.userId is string &&
+        request.resource.data.orderId is string &&
+        exists(/databases/$(database)/documents/orders/$(request.resource.data.orderId)) &&
+        get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.userId == request.resource.data.userId &&
+        request.resource.data.title is string && request.resource.data.title.size() <= 120 &&
+        request.resource.data.body is string && request.resource.data.body.size() <= 1000 &&
+        request.resource.data.read == false
+      );
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // These documents are consumed by the public site; never store secrets in them.
+    match /settings/{settingId} {
+      allow read: if isAdmin() || settingId in ['global', 'payment_methods'];
+      allow create, update, delete: if isAdmin() ||
+        (settingId == 'payment_methods' && hasPermission('managePaymentMethods')) ||
+        (settingId == 'global' && hasPermission('manageSettings'));
+    }
+
+    match /posts/{postId} {
+      allow read: if isAdmin() || hasPermission('managePromotions') || resource.data.status == 'approved';
+      allow create, update, delete: if hasPermission('managePromotions');
+    }
+
+    match /active_visitors/{sessionId} {
+      allow read: if hasPermission('viewAnalytics');
+      allow create, update: if request.resource.data.sessionId == sessionId &&
+        request.resource.data.path is string &&
+        request.resource.data.path.size() <= 512 &&
+        request.resource.data.lastActive is timestamp &&
+        (
+          (request.auth == null && request.resource.data.userId == null) ||
+          (isSignedIn() && (request.resource.data.userId == null || request.resource.data.userId == request.auth.uid))
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /admin_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Only the owner can assign or revoke staff permissions. Staff may read only their own grant.
+    match /adminMembers/{uid} {
+      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,77 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'khyhajmr08@gmail.com') ||
+        request.auth.uid == 'PqXqqCgdC1eYPz4HKHHLtDRejPD3'
+      );
+    }
+
+    function hasPermission(permission) {
+      return isAdmin() || (isSignedIn() &&
+        firestore.exists(/databases/ai-studio-3032cff5-bc93-468b-b60d-0955fb0a5cc0/documents/adminMembers/$(request.auth.uid)) &&
+        firestore.get(/databases/ai-studio-3032cff5-bc93-468b-b60d-0955fb0a5cc0/documents/adminMembers/$(request.auth.uid)).data.active == true &&
+        firestore.get(/databases/ai-studio-3032cff5-bc93-468b-b60d-0955fb0a5cc0/documents/adminMembers/$(request.auth.uid)).data.permissions[permission] == true
+      );
+    }
+
+    function isReceiptImage() {
+      return request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 8 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    // Receipts are stored under their owner's UID; clients cannot write to another user's path.
+    match /orders/{userId}/{orderId}/{fileName} {
+      allow read: if isAdmin() || hasPermission("viewOrders") || (isSignedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && isReceiptImage());
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // Identity documents are restricted to the owner and the configured administrator identities.
+    // Admin accounts recognized only through a Firestore role in a named database must also be
+    // explicitly added here or assigned an appropriate Firebase Auth custom claim.
+    match /kyc/{userId}/{fileName} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+        fileName.matches('^identity-[0-9]+[.](jpg|png|webp)$') &&
+        request.resource != null && request.resource.size > 0 &&
+        request.resource.size <= 8 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow update: if isAdmin() && request.resource != null &&
+        request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // Service and promotion media can be changed only by staff granted the matching permission.
+    match /services/{fileName} {
+      allow read: if true;
+      allow create, update: if hasPermission("manageServices") && request.resource != null && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024;
+      allow delete: if hasPermission("manageServices");
+    }
+    match /posts/{fileName} {
+      allow read: if true;
+      allow create, update: if hasPermission("managePromotions") && request.resource != null && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024;
+      allow delete: if hasPermission("managePromotions");
+    }
+
+    // Profile pictures are limited to small image uploads under the owner's UID.
+    match /users/{userId}/avatars/{fileName} {
+      allow read: if true;
+      allow create, update: if isSignedIn() && request.auth.uid == userId && request.resource != null && request.resource.size > 0 && request.resource.size <= 2 * 1024 * 1024 && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Deny every unrecognized Storage path by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
