@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /admin/
+Disallow: /dashboard
+Disallow: /account
+Disallow: /orders
+Disallow: /profile
+Disallow: /kyc
+Disallow: /history
+Disallow: /notifications
+Disallow: /api
+Disallow: /api/
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://mauritop.com/sitemap.xml
