@@ -233,7 +233,7 @@ async function startServer() {
       }
 
       // 2. Receipt verification for manual payment
-      if (['bankily', 'sadad', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
+      if (['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
         if (!proofImageUrl || typeof proofImageUrl !== 'string') {
           return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
         }

@@ -229,20 +229,31 @@ export const AdminPaymentManager: React.FC = () => {
               <div className="space-y-4 pt-1">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="relative group/logo w-12 h-12 rounded-2xl bg-slate-950 border border-white/10 p-2 flex items-center justify-center shrink-0 overflow-hidden">
+                    <div className="relative w-14 h-14 rounded-2xl bg-slate-950 border border-white/10 p-2 flex items-center justify-center shrink-0 overflow-hidden shadow-inner">
                       {logo ? (
                         <img src={logo} alt={method.labelAr} className="w-full h-full object-contain" />
                       ) : (
                         <CreditCard className="w-6 h-6 text-emerald-400" />
                       )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-base font-black text-white">{method.labelAr}</h4>
+                      <span className="text-[11px] font-mono text-slate-400 block mb-1.5">{method.label}</span>
+
+                      {/* Prominent permanent button for mobile & desktop to change payment logo */}
                       <label
-                        className="absolute inset-0 bg-black/60 opacity-0 group-hover/logo:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
-                        title="تغيير الشعار"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 active:scale-95 border border-emerald-500/30 text-emerald-300 text-xs font-bold cursor-pointer transition-all shadow-sm"
                       >
                         {uploadingLogoKey === key ? (
-                          <Loader2 size={16} className="text-white animate-spin" />
+                          <>
+                            <Loader2 size={13} className="animate-spin text-emerald-400" />
+                            <span>جاري الرفع...</span>
+                          </>
                         ) : (
-                          <Upload size={16} className="text-white" />
+                          <>
+                            <Upload size={13} className="text-emerald-400" />
+                            <span>رفع / تغيير الشعار</span>
+                          </>
                         )}
                         <input
                           type="file"
@@ -255,10 +266,6 @@ export const AdminPaymentManager: React.FC = () => {
                           }}
                         />
                       </label>
-                    </div>
-                    <div>
-                      <h4 className="text-base font-black text-white">{method.labelAr}</h4>
-                      <span className="text-[11px] font-mono text-slate-400 block">{method.label}</span>
                     </div>
                   </div>
 

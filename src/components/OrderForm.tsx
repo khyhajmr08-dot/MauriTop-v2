@@ -156,7 +156,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
   const PAYMENT_POSTS = useMemo(() => [
     { 
       id: "bankily" as const, 
-      logo: bankilyLogoImg, 
+      logo: paymentSettings.bankily?.logoUrl || bankilyLogoImg,
       label: paymentSettings.bankily?.label || "Bankily", 
       labelAr: paymentSettings.bankily?.labelAr || "بنكيلي", 
       desc: "Instant transfer via Bankily app", 
@@ -168,7 +168,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
     },
     { 
       id: "sadad" as const, 
-      logo: sadadLogoImg, 
+      logo: paymentSettings.sadad?.logoUrl || sadadLogoImg,
       label: paymentSettings.sadad?.label || "Sedad", 
       labelAr: paymentSettings.sadad?.labelAr || "سداد", 
       desc: "Fast transfer via Sedad", 
@@ -177,6 +177,18 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       unavailableReasonAr: paymentSettings.sadad?.unavailableReasonAr || "غير متوفر حالياً",
       unavailableReasonFr: paymentSettings.sadad?.unavailableReasonFr || "Actuellement indisponible",
       phone: paymentSettings.sadad?.phone || "27329380"
+    },
+    {
+      id: "gaza" as const,
+      logo: paymentSettings.gaza?.logoUrl || gazaLogoImg,
+      label: paymentSettings.gaza?.label || "GazaPay",
+      labelAr: paymentSettings.gaza?.labelAr || "غزة باي",
+      desc: "Transfer via GazaPay",
+      descAr: paymentSettings.gaza?.descAr || "التحويل المباشر عبر غزة باي",
+      active: paymentSettings.gaza?.enabled === true,
+      unavailableReasonAr: paymentSettings.gaza?.unavailableReasonAr || "غير متوفر حالياً",
+      unavailableReasonFr: paymentSettings.gaza?.unavailableReasonFr || "Actuellement indisponible",
+      phone: paymentSettings.gaza?.phone || "27329380"
     }
   ], [paymentSettings]);
 
@@ -676,6 +688,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       } catch (firestoreErr) {
         console.error("Firestore error handled:", firestoreErr);
       }
+    } finally {
+      setIsSubmittingOrder(false);
     }
   }
 
@@ -1429,6 +1443,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
                        language={language}
                        copied={copied}
                        onCopy={handleCopy}
+                       customLogoUrl={currentPaymentConfig?.logoUrl}
                        accountNumber={currentPaymentConfig?.phone || (paymentMethod === "sadad" ? "27329380" : "32014902")}
                        accountHolder={language === 'ar' ? currentPaymentConfig?.accountHolderAr : (language === 'fr' ? currentPaymentConfig?.accountHolderFr : currentPaymentConfig?.accountHolderAr)}
                        serviceTitle={language === 'ar' ? service.nameAr : (language === 'fr' ? service.nameFr : service.name)}
