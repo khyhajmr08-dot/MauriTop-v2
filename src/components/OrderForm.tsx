@@ -465,24 +465,31 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           : `Le mode de paiement sélectionné est actuellement indisponible. Veuillez en choisir un autre.`;
       }
 
-      if (!sender.trim()) return language === 'ar' ? "أدخل رقم المرسل" : "Entrez le numéro de l'expéditeur";
+      const cleanPhone = sender.replace(/\D/g, '');
+      if (!cleanPhone) {
+        return language === 'ar' ? "أدخل رقم المرسل (رقم الهاتف)" : "Entrez le numéro de l'expéditeur";
+      }
+      if (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone)) {
+        return language === 'ar'
+          ? "يرجى إدخال رقم هاتف موريتاني صالح (8 أرقام يبدأ بـ 2 أو 3 أو 4)"
+          : "Numéro de téléphone mauritanien invalide (8 chiffres commençant par 2, 3 ou 4)";
+      }
+
       if (!file) return language === 'ar' ? "أضف صورة الإيصال" : "Ajoutez la capture d'écran";
     }
     
     return "";
   }
 
+  const [guestTrackingToken, setGuestTrackingToken] = useState<string | null>(null);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!service) return;
 
-    if (!user) {
-      showToast(
-        language === 'ar' ? 'يرجى تسجيل الدخول أولاً لإرسال طلب الشحن' : 'Veuillez vous connecter pour envoyer la commande',
-        'error'
-      );
+    if (user && profile?.blocked) {
+      showToast(language === 'ar' ? 'حسابك محظور من إجراء الطلبات. يرجى مراجعة الإدارة.' : 'Votre compte est bloqué. Veuillez contacter l\'administration.', 'error');
       haptic.error();
-      navigate('/login');
       return;
     }
 
@@ -499,20 +506,19 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
     setShowConfirmModal(true);
   }
 
-  async function executeSubmit() {
-    if (!service) return;
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
-    if (!user) {
-      showToast(
-        language === 'ar' ? 'يرجى تسجيل الدخول أولاً لإرسال طلب الشحن' : 'Veuillez vous connecter pour envoyer la commande',
-        'error'
-      );
+  async function executeSubmit() {
+    if (!service || isSubmittingOrder) return;
+
+    if (user && profile?.blocked) {
       haptic.error();
       setShowConfirmModal(false);
-      navigate('/login');
+      showToast(language === 'ar' ? 'حسابك محظور من إجراء الطلبات' : 'Votre compte est bloqué', 'error');
       return;
     }
 
+    setIsSubmittingOrder(true);
     setLoading(true);
     setMsg("");
     let uploadedReceiptPath: string | null = null;
@@ -553,11 +559,12 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           throw new Error(language === 'ar' ? "تعذر تجهيز صورة الإيصال؛ اختر صورة أصغر" : "Impossible de préparer le justificatif; choisissez une image plus petite");
         }
 
-        uploadedReceiptPath = `order-receipts/${user.uid}/${orderRef.id}.jpg`;
+        const receiptUserId = user ? user.uid : "guest";
+        uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}_${Date.now()}.jpg`;
         const receiptRef = ref(storage, uploadedReceiptPath);
         const uploadedSnapshot = await uploadBytes(receiptRef, imageBlob, {
           contentType: imageBlob.type || "image/jpeg",
-          customMetadata: { ownerUid: user.uid, orderId: orderRef.id }
+          customMetadata: { ownerUid: receiptUserId, orderId: orderRef.id }
         });
         uploadedUrl = await getDownloadURL(uploadedSnapshot.ref);
         setUploadProgress(100);
@@ -566,26 +573,56 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
         setProcessingStatus(language === 'ar' ? "جاري إرسال الطلب..." : "Envoi...");
       }
 
-      await setDoc(orderRef, {
-        userId: user.uid,
-        userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
-        userEmail: user.email || "",
-        serviceId: service.id,
-        serviceType: service.nameAr || service.name,
-        amount: isQuoteMode ? 0 : Number(amount),
-        fee: 0,
-        total: isQuoteMode ? 0 : Number(amount),
-        accountDetails: detailsText,
-        fields: fieldValues,
-        status: 'pending',
-        proofImageUrl: uploadedUrl,
-        proofUrl: uploadedUrl,
-        paymentMethod: isQuoteMode ? "quote" : paymentMethod,
-        senderPhone: isQuoteMode ? "" : sender,
-        senderRef: senderReference,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      const cleanSenderPhone = sender.replace(/\D/g, '');
+
+      if (!user) {
+        // Guest Checkout submission via backend API endpoint
+        const guestResponse = await fetch("/api/guest/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serviceId: service.id,
+            serviceType: service.nameAr || service.name,
+            amount: isQuoteMode ? 0 : Number(amount),
+            paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+            senderPhone: cleanSenderPhone,
+            senderRef: senderReference,
+            proofImageUrl: uploadedUrl,
+            accountDetails: detailsText,
+            fields: fieldValues
+          })
+        });
+
+        const guestResult = await guestResponse.json();
+        if (!guestResponse.ok) {
+          throw new Error(guestResult.error || (language === 'ar' ? "تعذر إرسال طلب الزائر" : "Erreur de commande"));
+        }
+
+        setGuestTrackingToken(guestResult.trackingToken);
+      } else {
+        // Authenticated customer submission via Firestore SDK
+        await setDoc(orderRef, {
+          userId: user.uid,
+          userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
+          userEmail: user.email || "",
+          serviceId: service.id,
+          serviceType: service.nameAr || service.name,
+          amount: isQuoteMode ? 0 : Number(amount),
+          fee: 0,
+          total: isQuoteMode ? 0 : Number(amount),
+          accountDetails: detailsText,
+          fields: fieldValues,
+          status: 'pending',
+          proofImageUrl: uploadedUrl,
+          proofUrl: uploadedUrl,
+          paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+          senderPhone: cleanSenderPhone,
+          senderRef: senderReference,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+
       // The receipt is now associated with a persisted order; do not clean it up.
       uploadedReceiptPath = null;
 
@@ -611,10 +648,12 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       haptic.success();
       confetti({ particleCount: 200, spread: 80, origin: { y: 0.5 } });
       
-      // Auto-redirect to /orders after 3.2 seconds
-      setTimeout(() => {
-        navigate('/orders');
-      }, 3200);
+      // Auto-redirect to /orders after 3.2 seconds only if logged in
+      if (user) {
+        setTimeout(() => {
+          navigate('/orders');
+        }, 3200);
+      }
 
     } catch (err: any) {
       if (uploadedReceiptPath) {
@@ -831,19 +870,22 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
             </div>
           </div>
 
-          {!user ? (
-            <div className="glass-card rounded-2xl p-8 sm:p-10 text-center max-w-md mx-auto space-y-5 border border-white/10 bg-[#0B1220]/90">
-               <div className="w-14 h-14 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-center mx-auto">
-                 <AlertCircle className="w-7 h-7 text-rose-400" />
-               </div>
-               <h3 className="text-lg font-black text-white">{language === 'ar' ? 'يرجى تسجيل الدخول أولاً' : 'Connexion requise'}</h3>
-               <p className="text-xs text-slate-300 leading-relaxed">
-                 {language === 'ar' ? 'يجب عليك تسجيل الدخول بحسابك لمتابعة عملية الشحن وتتبع حالة طلبك.' : 'Veuillez vous connecter pour continuer votre commande et suivre son statut.'}
-               </p>
-               <Link to="/login" className="btn-primary py-3 px-8 text-sm inline-block w-full">{language === 'ar' ? 'دخول' : 'Se connecter'}</Link>
+          {!user && (
+            <div className="glass-card rounded-2xl p-4 sm:p-5 mb-4 text-center max-w-2xl mx-auto border border-emerald-500/30 bg-emerald-500/10 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-3 text-right">
+                <div className="w-10 h-10 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-white">{language === 'ar' ? 'طلب فوري ومباشر كزائر متاح' : 'Commande directe en tant qu\'invité'}</h4>
+                  <p className="text-[11px] text-slate-300">{language === 'ar' ? 'يمكنك إتمام الطلب الآن دون تسجيل وسنمنحك رمزاً سرياً لتتبعه، أو يمكنك تسجيل الدخول لحفظ طلباتك في حسابك.' : 'Vous pouvez commander en tant qu\'invité ou vous connecter.'}</p>
+                </div>
+              </div>
+              <Link to="/login" className="btn-primary py-2 px-5 text-xs whitespace-nowrap shrink-0">{language === 'ar' ? 'تسجيل الدخول' : 'Se connecter'}</Link>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="max-w-2xl mx-auto space-y-3 sm:space-y-4 relative w-full pb-32 sm:pb-24">
+          )}
+
+          <form onSubmit={handleSubmit} className="max-w-2xl mx-auto space-y-3 sm:space-y-4 relative w-full pb-32 sm:pb-24">
               <fieldset disabled={loading} className="space-y-3 sm:space-y-4 w-full">
                 {/* Step 1: User details / الخطوة 1: البيانات المطلوبة */}
                 <motion.div 
@@ -1647,7 +1689,6 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
                 </div>
               </div>
             </form>
-          )}
         </motion.div>
       )}
 
@@ -1921,6 +1962,32 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
                   ? 'تم استلام طلبك وبدأ فريق الدعم في معالجته فوراً.'
                   : 'Votre demande a été reçue et est en cours de traitement par notre équipe.'}
               </p>
+
+              {/* Guest Secret Tracking Token Display */}
+              {guestTrackingToken && (
+                <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-4 mb-6 text-center space-y-2">
+                  <p className="text-xs font-black text-emerald-300">
+                    {language === 'ar' ? '🔑 الرمز السري لتتبع طلبك كزائر:' : '🔑 Code secret de suivi :'}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 bg-slate-900/90 py-2 px-3 rounded-xl border border-white/10 font-mono font-black text-sm text-white">
+                    <span className="select-all">{guestTrackingToken}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(guestTrackingToken);
+                        showToast(language === 'ar' ? 'تم نسخ الرمز السري بنجاح' : 'Code copié', 'success');
+                      }}
+                      className="p-1 text-emerald-400 hover:text-white"
+                      title="نسخ"
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-300">
+                    {language === 'ar' ? 'ملاحظة: هذا الرمز يظهر مرة واحدة فقط ولا يمكن تتبع طلب الزائر بدونه.' : 'Sauvegardez ce code pour suivre votre commande.'}
+                  </p>
+                </div>
+              )}
 
               {/* Order Info Card */}
               <div className="bg-slate-950/70 border border-white/10 rounded-2xl p-4 text-start mb-6 space-y-2.5 font-sans">

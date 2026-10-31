@@ -16,6 +16,8 @@ export interface PaymentMethodConfig {
   unavailableReasonFr?: string;
   descAr?: string;
   descFr?: string;
+  logoUrl?: string;
+  order?: number;
 }
 
 export type PaymentSettingsMap = Record<string, PaymentMethodConfig>;
@@ -90,6 +92,8 @@ export function normalizePaymentSettings(raw: any): PaymentSettingsMap {
         // default for that method instead of accidentally enabling disabled providers.
         enabled: typeof methods[key].enabled === 'boolean' ? methods[key].enabled : DEFAULT_PAYMENT_CONFIGS[key].enabled,
         phone: normalizedPhone,
+        logoUrl: methods[key].logoUrl || undefined,
+        order: typeof methods[key].order === 'number' ? methods[key].order : 0,
         unavailableReasonAr: methods[key].unavailableReasonAr || DEFAULT_PAYMENT_CONFIGS[key].unavailableReasonAr || "غير متوفر حالياً",
         unavailableReasonFr: methods[key].unavailableReasonFr || DEFAULT_PAYMENT_CONFIGS[key].unavailableReasonFr || "Actuellement indisponible"
       };

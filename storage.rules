@@ -29,6 +29,13 @@ service firebase.storage {
       allow delete: if isOwner();
     }
 
+    // Payment method logos: managed by trusted owner
+    match /payment-methods/{fileName} {
+      allow read: if true;
+      allow create, update: if isOwner() && validPublicImageUpload(5 * 1024 * 1024);
+      allow delete: if isOwner();
+    }
+
     // Publicly displayed promotional imagery: only the trusted owner can modify it.
     match /posts/{fileName} {
       allow read: if true;
@@ -36,12 +43,17 @@ service firebase.storage {
       allow delete: if isOwner();
     }
 
-    // Payment proofs are stored under the authenticated customer's own UID.
-    // They are not generally readable by anonymous users through the SDK.
+    // Payment proofs: Authenticated customers upload to /order-receipts/{userId}/
+    // Guests upload to /order-receipts/guest/ with non-enumerable files.
+    // Read access is STRICTLY restricted: Owner or authenticated owner of userId.
+    // Guests NEVER have SDK read access to receipts or receipt directories.
+    // Backend server verifies and generates temporary signed URLs when required.
     match /order-receipts/{userId}/{fileName} {
       allow read: if isOwner() || (isSignedIn() && request.auth.uid == userId);
-      allow create, update: if isSignedIn() && request.auth.uid == userId &&
-        validPublicImageUpload(8 * 1024 * 1024);
+      allow create, update: if (
+        (isSignedIn() && request.auth.uid == userId) ||
+        (userId == 'guest' && fileName.size() >= 16)
+      ) && validPublicImageUpload(8 * 1024 * 1024);
       allow delete: if isOwner();
     }
 

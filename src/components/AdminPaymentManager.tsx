@@ -8,7 +8,9 @@ import {
   ShieldCheck, 
   Copy, 
   RotateCcw,
-  Check
+  Check,
+  Upload,
+  Loader2
 } from "lucide-react";
 import { useToast } from "../contexts/ToastContext";
 import { cn } from "../lib/utils";
@@ -19,6 +21,8 @@ import {
   subscribePaymentSettings, 
   savePaymentSettings 
 } from "../lib/paymentSettings";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "../lib/firebase";
 
 import bankilyLogoImg from "../assets/images/bankily_real_logo_1779370169060.png";
 import sadadLogoImg from "../assets/images/sadad_real_logo_1779370189416.png";
@@ -27,9 +31,45 @@ import gazaLogoImg from "../assets/images/gaza_real_logo_1779370210822.png";
 export const AdminPaymentManager: React.FC = () => {
   const { showToast } = useToast();
   const [settings, setSettings] = useState<PaymentSettingsMap>(DEFAULT_PAYMENT_CONFIGS);
+  const [uploadingLogoKey, setUploadingLogoKey] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleLogoUpload = async (key: string, file: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("حجم الشعار كبير جداً (الحد الأقصى 5 ميجابايت)", "error");
+      return;
+    }
+    if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.type)) {
+      showToast("يرجى اختيار صورة صالحة (PNG أو JPG أو WEBP)", "error");
+      return;
+    }
+
+    setUploadingLogoKey(key);
+    try {
+      const storageRef = ref(storage, `payment-methods/${key}_${Date.now()}.png`);
+      const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+
+      const updated = {
+        ...settings,
+        [key]: {
+          ...settings[key],
+          logoUrl: downloadUrl
+        }
+      };
+      setSettings(updated);
+      await savePaymentSettings(updated);
+      showToast(`تم رفع وتحديث شعار ${settings[key]?.labelAr || key} بنجاح!`, "success");
+    } catch (err: any) {
+      console.error("Logo upload error:", err);
+      showToast("فشل رفع الشعار إلى التخزين السحابي", "error");
+    } finally {
+      setUploadingLogoKey(null);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = subscribePaymentSettings((data) => {
@@ -189,12 +229,32 @@ export const AdminPaymentManager: React.FC = () => {
               <div className="space-y-4 pt-1">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-white/10 p-2 flex items-center justify-center shrink-0">
+                    <div className="relative group/logo w-12 h-12 rounded-2xl bg-slate-950 border border-white/10 p-2 flex items-center justify-center shrink-0 overflow-hidden">
                       {logo ? (
                         <img src={logo} alt={method.labelAr} className="w-full h-full object-contain" />
                       ) : (
                         <CreditCard className="w-6 h-6 text-emerald-400" />
                       )}
+                      <label
+                        className="absolute inset-0 bg-black/60 opacity-0 group-hover/logo:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
+                        title="تغيير الشعار"
+                      >
+                        {uploadingLogoKey === key ? (
+                          <Loader2 size={16} className="text-white animate-spin" />
+                        ) : (
+                          <Upload size={16} className="text-white" />
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={uploadingLogoKey === key}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleLogoUpload(key, f);
+                          }}
+                        />
+                      </label>
                     </div>
                     <div>
                       <h4 className="text-base font-black text-white">{method.labelAr}</h4>

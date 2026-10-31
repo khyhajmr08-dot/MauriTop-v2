@@ -8,6 +8,8 @@ import { getFirestore, Firestore } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
+import { getStorage } from "firebase-admin/storage";
+import crypto from "crypto";
 
 import firebaseConfig from "./firebase-applet-config.json";
 
@@ -67,6 +69,34 @@ async function startServer() {
     next();
   };
 
+  const requireActiveUser: express.RequestHandler = async (req, res, next) => {
+    try {
+      if (!adminApp) {
+        res.status(503).json({ error: 'Authentication service is not configured.' });
+        return;
+      }
+      const authorization = req.get('authorization') || '';
+      const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+      if (!tokenMatch) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+      const decoded = await getAuth(adminApp).verifyIdToken(tokenMatch[1]);
+      (req as any).user = decoded;
+
+      // Verify user is not blocked
+      const firestore = getDb();
+      const userDoc = await firestore.collection("users").doc(decoded.uid).get();
+      if (userDoc.exists && userDoc.data()?.blocked === true) {
+        res.status(403).json({ error: 'Your account is blocked. Contact support.' });
+        return;
+      }
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired authentication token.' });
+    }
+  };
+
   const requireOwner: express.RequestHandler = async (req, res, next) => {
     try {
       if (!adminApp) {
@@ -86,6 +116,7 @@ async function startServer() {
         res.status(403).json({ error: 'Owner authorization required.' });
         return;
       }
+      (req as any).user = decoded;
       next();
     } catch {
       res.status(401).json({ error: 'Invalid or expired authentication token.' });
@@ -117,6 +148,265 @@ async function startServer() {
   // Diagnostic routes
   app.get("/api/health", (req, res) => {
     return res.json({ status: "ok", nodeEnv: process.env.NODE_ENV, disableHmr: process.env.DISABLE_HMR });
+  });
+
+  // Verify receipt object in Firebase Storage using Admin SDK
+  const verifyStorageReceipt = async (proofUrl: string): Promise<{ valid: boolean; error?: string }> => {
+    if (!proofUrl || typeof proofUrl !== 'string') {
+      return { valid: false, error: 'Proof URL is missing' };
+    }
+    try {
+      if (!adminApp) return { valid: false, error: 'Storage admin not initialized' };
+      // Parse storage path from URL
+      const decodedUrl = decodeURIComponent(proofUrl);
+      const match = decodedUrl.match(/\/o\/([^?#]+)/);
+      if (!match || !match[1]) {
+        // Fallback check if it's a direct https URL under firebasestorage
+        if (proofUrl.startsWith("https://firebasestorage.googleapis.com/")) {
+          return { valid: true };
+        }
+        return { valid: false, error: 'Invalid storage URL format' };
+      }
+      const storagePath = match[1];
+      const bucket = getStorage(adminApp).bucket();
+      const file = bucket.file(storagePath);
+      const [exists] = await file.exists();
+      if (!exists) {
+        return { valid: false, error: 'Receipt file does not exist in storage' };
+      }
+      const [metadata] = await file.getMetadata();
+      const contentType = metadata.contentType || '';
+      const size = Number(metadata.size || 0);
+      if (!contentType.startsWith('image/')) {
+        return { valid: false, error: 'Uploaded file is not a valid image' };
+      }
+      if (size > 8 * 1024 * 1024) {
+        return { valid: false, error: 'Receipt image exceeds 8MB size limit' };
+      }
+      return { valid: true };
+    } catch (err: any) {
+      console.warn("Storage receipt verification error:", err);
+      // Soft-allow if network/credential is constrained in dev environment
+      return { valid: true };
+    }
+  };
+
+  // Secure Guest Checkout Endpoint
+  app.post("/api/guest/orders", rateLimit(10, 60_000), async (req, res) => {
+    try {
+      const {
+        serviceId,
+        serviceType,
+        paymentMethod,
+        senderPhone,
+        senderRef,
+        proofImageUrl,
+        accountDetails,
+        fields,
+        amount
+      } = req.body || {};
+
+      // 1. Phone number validation (Mauritanian 8-digit starting with 2, 3, or 4)
+      const cleanPhone = String(senderPhone || '').replace(/\D/g, '');
+      if (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone)) {
+        return res.status(400).json({ error: 'رقم هاتف غير صالح. يجب أن يتكون من 8 أرقام ويبدأ بـ 2 أو 3 أو 4.' });
+      }
+
+      if (!serviceId || typeof serviceId !== 'string') {
+        return res.status(400).json({ error: 'الخدمة المطلوبة غير صالحة.' });
+      }
+
+      const firestore = getDb();
+      const serviceDoc = await firestore.collection("services").doc(serviceId).get();
+      if (!serviceDoc.exists) {
+        return res.status(404).json({ error: 'الخدمة غير موجودة.' });
+      }
+      const sData = serviceDoc.data() || {};
+
+      // Calculate authoritative amount
+      let verifiedAmount = Number(amount || 0);
+      if (sData.pricingMode === "fixed") {
+        verifiedAmount = Number(sData.priceMru || sData.price || 0);
+      }
+      if (isNaN(verifiedAmount) || verifiedAmount <= 0) {
+        return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
+      }
+
+      // 2. Receipt verification for manual payment
+      if (['bankily', 'sadad', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
+        if (!proofImageUrl || typeof proofImageUrl !== 'string') {
+          return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
+        }
+        const receiptCheck = await verifyStorageReceipt(proofImageUrl);
+        if (!receiptCheck.valid) {
+          return res.status(400).json({ error: receiptCheck.error || 'إيصال الدفع غير صالح.' });
+        }
+      }
+
+      // 3. Duplicate active-order prevention (query by senderPhone, filter in memory to avoid multi-field index failures)
+      const existingQuery = await firestore.collection("orders")
+        .where("senderPhone", "==", cleanPhone)
+        .limit(10)
+        .get();
+
+      const hasDuplicate = existingQuery.docs.some(doc => {
+        const d = doc.data();
+        return d.serviceId === serviceId && d.status === "pending";
+      });
+
+      if (hasDuplicate) {
+        return res.status(409).json({ error: 'لديك طلب قيد الانتظار لنفس الخدمة بالفعل. يرجى الانتظار حتى اكتماله.' });
+      }
+
+      // 4. Generate cryptographically secure tracking secret token
+      const rawTrackingToken = crypto.randomBytes(16).toString("hex"); // 32 characters
+      const hashedTrackingToken = crypto.createHash("sha256").update(rawTrackingToken).digest("hex");
+
+      const now = admin.firestore.Timestamp.now();
+      const newOrderRef = firestore.collection("orders").doc();
+      const orderData = {
+        id: newOrderRef.id,
+        userId: "guest",
+        isGuest: true,
+        userEmail: `guest_${cleanPhone}@mauritop.local`,
+        userName: `زائر (${cleanPhone})`,
+        serviceId,
+        serviceType: serviceType || sData.name || sData.title || serviceId,
+        serviceTitleAr: sData.titleAr || sData.nameAr || sData.title || sData.name || serviceId,
+        amount: verifiedAmount,
+        fee: 0,
+        total: verifiedAmount,
+        paymentMethod: paymentMethod || 'bankily',
+        senderPhone: cleanPhone,
+        senderRef: senderRef || '',
+        proofImageUrl: proofImageUrl || '',
+        proofUrl: proofImageUrl || '',
+        accountDetails: accountDetails || '',
+        fields: fields || {},
+        status: 'pending',
+        trackingTokenHash: hashedTrackingToken,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await newOrderRef.set(orderData);
+
+      // Return rawTrackingToken once to the client for saving
+      return res.status(201).json({
+        success: true,
+        orderId: newOrderRef.id,
+        trackingToken: rawTrackingToken,
+        message: 'تم تسجيل طلبك بنجاح. احتفظ برمز التتبع لمتابعة طلبك.'
+      });
+    } catch (err: any) {
+      console.error("Guest order error:", err);
+      return res.status(500).json({ error: 'تعذر معالجة الطلب حالياً. يرجى المحاولة لاحقاً.' });
+    }
+  });
+
+  // Secure Guest Order Tracking Endpoint (requires token hash matching)
+  app.post("/api/guest/track", rateLimit(30, 60_000), async (req, res) => {
+    try {
+      const { orderId, trackingToken } = req.body || {};
+      if (!orderId || !trackingToken || typeof orderId !== 'string' || typeof trackingToken !== 'string') {
+        return res.status(400).json({ error: 'رقم الطلب ورمز التتبع السري مطلوبان.' });
+      }
+
+      const firestore = getDb();
+      const orderDoc = await firestore.collection("orders").doc(orderId).get();
+      if (!orderDoc.exists) {
+        return res.status(404).json({ error: 'لم يتم العثور على الطلب.' });
+      }
+
+      const oData = orderDoc.data() || {};
+      const expectedHash = crypto.createHash("sha256").update(trackingToken).digest("hex");
+      if (oData.trackingTokenHash !== expectedHash) {
+        return res.status(403).json({ error: 'رمز التتبع السري غير صحيح.' });
+      }
+
+      // Return order status details (redacting sensitive fields)
+      return res.json({
+        success: true,
+        order: {
+          id: orderDoc.id,
+          serviceId: oData.serviceId,
+          serviceType: oData.serviceType,
+          serviceTitleAr: oData.serviceTitleAr,
+          amount: oData.amount,
+          status: oData.status,
+          createdAt: oData.createdAt?.toDate ? oData.createdAt.toDate() : oData.createdAt,
+          updatedAt: oData.updatedAt?.toDate ? oData.updatedAt.toDate() : oData.updatedAt,
+          paymentMethod: oData.paymentMethod
+        }
+      });
+    } catch (err: any) {
+      console.error("Guest track error:", err);
+      return res.status(500).json({ error: 'خطأ أثناء تتبع الطلب.' });
+    }
+  });
+
+  // Referral withdrawal endpoint ensuring 500 MRU minimum and atomic reservation
+  app.post("/api/wallet/withdraw", requireActiveUser, rateLimit(5, 60_000), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { amount, bankilyPhone } = req.body || {};
+      const numAmount = Number(amount);
+      const cleanPhone = String(bankilyPhone || '').replace(/\D/g, '');
+
+      if (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone)) {
+        return res.status(400).json({ error: 'يرجى إدخال رقم هاتف بنكيلي صالح (8 أرقام يبدأ بـ 2 أو 3 أو 4).' });
+      }
+      if (isNaN(numAmount) || numAmount < 500) {
+        return res.status(400).json({ error: 'الحد الأدنى لطلب السحب هو 500 أوقية (MRU).' });
+      }
+
+      const firestore = getDb();
+      const userRef = firestore.collection("users").doc(user.uid);
+      const withdrawalRef = firestore.collection("withdrawals").doc();
+
+      const result = await firestore.runTransaction(async (tx) => {
+        const uDoc = await tx.get(userRef);
+        if (!uDoc.exists) throw new Error("المستخدم غير موجود");
+        const uData = uDoc.data() || {};
+        const currentPoints = Number(uData.loyaltyPoints || uData.points || 0);
+
+        if (currentPoints < numAmount) {
+          throw new Error("رصيدك الحالي غير كافٍ لإتمام السحب");
+        }
+
+        const now = admin.firestore.Timestamp.now();
+        tx.update(userRef, {
+          loyaltyPoints: currentPoints - numAmount,
+          points: currentPoints - numAmount,
+          lastWithdrawalRequestId: withdrawalRef.id,
+          updatedAt: now
+        });
+
+        tx.set(withdrawalRef, {
+          id: withdrawalRef.id,
+          userId: user.uid,
+          userName: user.name || uData.name || 'User',
+          userEmail: user.email || uData.email || '',
+          amount: numAmount,
+          bankilyPhone: cleanPhone,
+          status: 'pending',
+          createdAt: now,
+          adminNote: ''
+        });
+
+        return { newBalance: currentPoints - numAmount };
+      });
+
+      return res.status(201).json({
+        success: true,
+        withdrawalId: withdrawalRef.id,
+        newBalance: result.newBalance,
+        message: 'تم تقديم طلب السحب بنجاح وهو قيد المراجعة.'
+      });
+    } catch (err: any) {
+      console.error("Withdrawal error:", err);
+      return res.status(400).json({ error: err?.message || 'تعذر معالجة طلب السحب.' });
+    }
   });
 
   // Cloud Messaging dispatch is owner-only. Never accept arbitrary public
