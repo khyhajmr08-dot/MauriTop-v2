@@ -15,10 +15,12 @@ export default function BottomNavigation() {
 
   const isArabic = language === "ar";
 
-  // Hide BottomNavigation on admin routes, checkout/order flows, and auth pages
+  // Hide BottomNavigation on admin routes, checkout/order flows, calculator, assistant, and auth pages
   const shouldHide = 
     location.pathname.startsWith("/admin") ||
     location.pathname.startsWith("/services/") ||
+    location.pathname === "/calculator" ||
+    location.pathname === "/assistant" ||
     location.pathname === "/login" ||
     location.pathname === "/register" ||
     location.pathname === "/kyc" ||

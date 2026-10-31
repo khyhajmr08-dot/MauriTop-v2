@@ -374,8 +374,13 @@ export default function ServicesManager() {
         ? maxOrder + 1
         : parsedOrder;
 
+      const canonicalPrice = Number(formData.priceMru ?? (formData as any).price ?? (formData as any).suggestedPrice ?? 0);
+
       const finalData = {
         ...formData,
+        priceMru: canonicalPrice,
+        price: canonicalPrice,
+        suggestedPrice: canonicalPrice,
         order: orderVal,
         imageUrl: finalImageUrl,
         image: finalImageUrl,
@@ -1018,7 +1023,7 @@ export default function ServicesManager() {
                     formData.pricingMode === "custom") && (
                     <div className="space-y-2">
                       <label className="text-xs font-black text-slate-500 uppercase tracking-widest">
-                        السعر الأساسي (MRU)
+                        السعر الأساسي للمستهلك (MRU)
                       </label>
                       <input
                         type="number"
@@ -1033,6 +1038,50 @@ export default function ServicesManager() {
                       />
                     </div>
                   )}
+                </div>
+
+                {/* Internal Supplier & Margin Settings (Admin Only) */}
+                <div className="p-6 bg-slate-50 border border-slate-200 rounded-3xl space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Database size={16} className="text-cyan-600" />
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                      بيانات تسعير المورد والهامش (خاصة بالإدارة ولا تظهر للزبائن)
+                    </h4>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-500">سعر شراء المورد (الجملة)</label>
+                      <input
+                        type="number"
+                        value={formData.supplierCost ?? 0}
+                        onChange={(e) => setFormData({ ...formData, supplierCost: Number(e.target.value) })}
+                        placeholder="0"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-500">عملة الشراء</label>
+                      <select
+                        value={formData.supplierCurrency || "MRU"}
+                        onChange={(e) => setFormData({ ...formData, supplierCurrency: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-cyan-500"
+                      >
+                        <option value="MRU">MRU (أوقية)</option>
+                        <option value="USD">USD ($)</option>
+                        <option value="EUR">EUR (€)</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-500">هامش الربح المقدر (MRU)</label>
+                      <input
+                        type="number"
+                        value={formData.profitMargin ?? 0}
+                        onChange={(e) => setFormData({ ...formData, profitMargin: Number(e.target.value) })}
+                        placeholder="0"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {formData.pricingMode === "range" && (

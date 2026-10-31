@@ -49,6 +49,9 @@ export interface Service {
   minAmountMru?: number;
   maxAmountMru?: number;
   ratePerUnit?: number;
+  supplierCost?: number;
+  supplierCurrency?: string;
+  profitMargin?: number;
   unit?: string;
   badge?: string;
   badgeAr?: string;

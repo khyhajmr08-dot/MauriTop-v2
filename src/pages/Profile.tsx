@@ -98,11 +98,25 @@ export default function Profile() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone && (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone))) {
+      showToast(
+        isArabic ? "يرجى إدخال رقم هاتف موريتاني صالح (8 أرقام يبدأ بـ 2 أو 3 أو 4)" : "Numéro de téléphone mauritanien invalide",
+        "error"
+      );
+      return;
+    }
+
     setSaving(true);
     try {
-      await setDoc(doc(db, "users", user.uid), { name: name.trim(), phoneNumber: phone.trim() }, { merge: true });
+      await setDoc(
+        doc(db, "users", user.uid),
+        { name: name.trim(), phoneNumber: cleanPhone, phone: cleanPhone },
+        { merge: true }
+      );
       if (auth.currentUser && name.trim()) await updateProfile(auth.currentUser, { displayName: name.trim() });
-      showToast(isArabic ? "تم حفظ البيانات بنجاح!" : "Enregistré avec succès !", "success");
+      showToast(isArabic ? "تم حفظ البيانات ورقم الهاتف بنجاح!" : "Enregistré avec succès !", "success");
     } catch {
       showToast(isArabic ? "خطأ في حفظ البيانات" : "Erreur lors de l'enregistrement", "error");
     } finally {

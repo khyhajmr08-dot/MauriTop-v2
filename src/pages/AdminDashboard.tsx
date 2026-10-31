@@ -128,7 +128,37 @@ export default function AdminDashboard() {
   const [isKycRejectModalOpen, setIsKycRejectModalOpen] = useState(false);
   const [kycActionLoading, setKycActionLoading] = useState(false);
   const [kycStatusFilter, setKycStatusFilter] = useState<string>("all");
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    return localStorage.getItem("mauritop_admin_sound") !== "false";
+  });
   const mainScrollRef = React.useRef<HTMLElement>(null);
+
+  const toggleSound = () => {
+    const nextVal = !soundEnabled;
+    setSoundEnabled(nextVal);
+    localStorage.setItem("mauritop_admin_sound", String(nextVal));
+    showToast(nextVal ? "تم تفعيل التنبيه الصوتي للطلبات" : "تم كتم التنبيه الصوتي", "info");
+  };
+
+  const playOrderAlertSound = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } catch (e) {
+      // Audio autoplay policy fallback
+    }
+  }, [soundEnabled]);
 
   React.useEffect(() => {
     if (mainScrollRef.current) {
@@ -496,31 +526,26 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleToggleUserRole = async (targetUser: any) => {
+  const handleSetStaffRole = async (targetUser: any, newRole: 'support' | 'finance' | 'user') => {
     if (!targetUser) return;
-    // The profile `role` field is no longer an authorization source. Until a
-    // trusted granular staff-permissions workflow is implemented, never promote
-    // a customer to admin from this button. Legacy role labels can be removed.
     if (targetUser.id === user?.uid) {
-      showToast("لا يمكن تعديل رتبة حساب المالك من قائمة المستخدمين", "info");
-      return;
-    }
-    if (targetUser.role !== 'admin') {
-      showToast("لا تمنح خانة الدور صلاحيات إدارية. نظام صلاحيات الموظفين يحتاج إلى إعداد موثوق منفصل.", "info");
+      showToast("لا يمكن تعديل رتبة حساب المالك من لوحة الموظفين", "info");
       return;
     }
     try {
       setRoleActionUserId(targetUser.id);
       await updateDoc(doc(db, "users", targetUser.id), {
-        role: 'user',
+        staffRole: newRole === 'user' ? null : newRole,
+        role: newRole === 'user' ? 'user' : 'staff',
         updatedAt: serverTimestamp()
       });
-      setUsersList(prev => prev.map(u => u.id === targetUser.id ? { ...u, role: 'user' } : u));
+      setUsersList(prev => prev.map(u => u.id === targetUser.id ? { ...u, staffRole: newRole === 'user' ? null : newRole, role: newRole === 'user' ? 'user' : 'staff' } : u));
       cacheService.remove("admin_users");
-      showToast(`تمت إزالة رتبة الإدارة القديمة من "${targetUser.name || 'المستخدم'}". الصلاحيات الفعلية مرتبطة بهوية المالك الموثوقة فقط.`, "success");
+      const roleLabel = newRole === 'support' ? "موظف دعم فني" : newRole === 'finance' ? "موظف مالية ومحاسبة" : "مستخدم عادي";
+      showToast(`تم تحديث رتبة "${targetUser.name || 'المستخدم'}" إلى: ${roleLabel}`, "success");
     } catch (err: any) {
-      console.error("Legacy role cleanup error:", err);
-      showToast(`فشل تعديل رتبة المستخدم: ${err.message || 'خطأ غير متوقع'}`, "error");
+      console.error("Staff role update error:", err);
+      showToast(`فشل تحديث رتبة الموظف: ${err.message || 'خطأ غير متوقع'}`, "error");
     } finally {
       setRoleActionUserId(null);
     }
@@ -1054,6 +1079,19 @@ export default function AdminDashboard() {
                   className="bg-slate-50 border border-slate-200 rounded-xl pr-10 pl-4 py-2 text-sm focus:border-cyan-500 outline-none w-64 transition-all text-slate-800 font-bold"
                 />
              </div>
+             <button
+               onClick={toggleSound}
+               className={cn(
+                 "p-2 rounded-xl transition-all border flex items-center gap-1.5 text-xs font-black",
+                 soundEnabled
+                   ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                   : "bg-slate-100 border-slate-200 text-slate-400"
+               )}
+               title={soundEnabled ? "كتم صوت التنبيهات" : "تفعيل صوت التنبيهات"}
+             >
+                <Bell size={16} className={soundEnabled ? "text-emerald-600" : "text-slate-400"} />
+                <span>{soundEnabled ? "الصوت مفعّل" : "الصوت مكتوم"}</span>
+             </button>
              <button onClick={() => navigate("/")} className="p-2 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 rounded-lg transition-all" title="معاينة المتجر">
                 <ExternalLink size={20} />
              </button>
@@ -1856,12 +1894,19 @@ export default function AdminDashboard() {
                                     )}
                                   </td>
                                   <td className="px-5 py-3.5 whitespace-nowrap">
-                                    <span className={cn(
-                                      "text-[10px] font-black px-3 py-1 rounded-full border",
-                                      u.role === 'admin' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-slate-100 text-slate-600 border-slate-200"
-                                    )}>
-                                      {u.role === 'admin' ? 'رتبة إدارة قديمة' : 'مستخدم'}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={cn(
+                                        "text-[10px] font-black px-3 py-1 rounded-full border",
+                                        u.staffRole === 'support' ? "bg-cyan-50 text-cyan-700 border-cyan-200" :
+                                        u.staffRole === 'finance' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                        u.role === 'admin' ? "bg-purple-50 text-purple-700 border-purple-200" :
+                                        "bg-slate-100 text-slate-600 border-slate-200"
+                                      )}>
+                                        {u.staffRole === 'support' ? 'دعم فني 🎧' :
+                                         u.staffRole === 'finance' ? 'مالية 💰' :
+                                         u.role === 'admin' ? 'مدير عام 👑' : 'مستخدم'}
+                                      </span>
+                                    </div>
                                   </td>
                                   <td className="px-5 py-3.5 whitespace-nowrap font-mono">
                                     <span className="font-bold text-slate-700 text-xs sm:text-sm">{u.referralsCount || u.referralCount || 0}</span>
@@ -1901,32 +1946,17 @@ export default function AdminDashboard() {
                                         )
                                       )}
 
-                                      <button
-                                        type="button"
-                                        onClick={() => handleToggleUserRole(u)}
-                                        disabled={roleActionUserId === u.id || (u.role !== 'admin' && u.id !== user?.uid) || u.id === user?.uid}
-                                        className={cn(
-                                          "text-[10px] font-black px-2.5 py-1 rounded-xl border transition-all cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1",
-                                          u.role === 'admin'
-                                            ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-600 hover:text-white"
-                                            : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-800 hover:text-white"
-                                        )}
-                                        title={u.role === 'admin' ? "إزالة رتبة إدارة قديمة غير موثوقة" : "التغيير إلى مدير غير متاح عبر حقل الدور"}
+                                      {/* Staff Role Selector */}
+                                      <select
+                                        value={u.staffRole || (u.role === 'admin' ? 'admin' : 'user')}
+                                        onChange={(e) => handleSetStaffRole(u, e.target.value as any)}
+                                        disabled={roleActionUserId === u.id || u.id === user?.uid}
+                                        className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500"
                                       >
-                                        {roleActionUserId === u.id ? (
-                                          <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                        ) : u.role === 'admin' ? (
-                                          <>
-                                            <ShieldCheck size={11} />
-                                            <span>مدير</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <ShieldAlert size={11} />
-                                            <span>غير مفعّل</span>
-                                          </>
-                                        )}
-                                      </button>
+                                        <option value="user">مستخدم عادي</option>
+                                        <option value="support">موظف دعم فني</option>
+                                        <option value="finance">موظف مالية</option>
+                                      </select>
 
                                       <button 
                                         onClick={() => handleToggleBlock(u.id, !!u.blocked)}
@@ -2021,19 +2051,16 @@ export default function AdminDashboard() {
                               </span>
 
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleUserRole(u)}
-                                  disabled={roleActionUserId === u.id || u.role !== 'admin' || u.id === user?.uid}
-                                  className={cn(
-                                    "text-[10px] font-black px-2 py-1 rounded-lg border transition-all cursor-pointer active:scale-95 disabled:opacity-50",
-                                    u.role === 'admin'
-                                      ? "bg-purple-50 text-purple-700 border-purple-200"
-                                      : "bg-slate-100 text-slate-700 border-slate-200"
-                                  )}
+                                <select
+                                  value={u.staffRole || (u.role === 'admin' ? 'admin' : 'user')}
+                                  onChange={(e) => handleSetStaffRole(u, e.target.value as any)}
+                                  disabled={roleActionUserId === u.id || u.id === user?.uid}
+                                  className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500"
                                 >
-                                  {roleActionUserId === u.id ? "..." : u.role === 'admin' ? "إزالة رتبة قديمة" : "الصلاحيات غير مفعّلة"}
-                                </button>
+                                  <option value="user">مستخدم عادي</option>
+                                  <option value="support">دعم فني</option>
+                                  <option value="finance">مالية</option>
+                                </select>
 
                                 {userPhone && (
                                   isPhoneInvalid ? (
