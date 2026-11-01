@@ -5,15 +5,17 @@ import { cn } from "../lib/utils";
 // Bank logos
 import sadadLogoImg from "../assets/images/sadad_real_logo_1779370189416.png";
 import bankilyLogoImg from "../assets/images/bankily_real_logo_1779370169060.png";
+import gazaLogoImg from "../assets/images/gaza_real_logo_1779370210822.png";
 
 interface PaymentMethodCardProps {
-  paymentMethod: "bankily" | "sadad" | string;
+  paymentMethod: "bankily" | "sadad" | "gaza" | string;
   amount: number | string;
   language: string;
   copied: boolean;
   onCopy: () => void;
   accountNumber?: string;
   accountHolder?: string;
+  customLogoUrl?: string;
   serviceTitle?: string;
   serviceImage?: string;
   serviceCategory?: string;
@@ -29,24 +31,40 @@ export const PaymentMethodCard: React.FC<PaymentMethodCardProps> = ({
   onCopy,
   accountNumber,
   accountHolder,
+  customLogoUrl,
   serviceTitle,
   isAvailable = true,
   unavailableReason,
 }) => {
   const isArabic = language === "ar";
   const isBankily = paymentMethod === "bankily";
+  const isSadad = paymentMethod === "sadad";
 
-  // Official branding
+  const isGaza = paymentMethod === "gaza" || paymentMethod === "gazapay";
+
+  // Official branding with dynamic custom logo support
   const methodInfo = isBankily
     ? {
         name: isArabic ? "بنكيلي (Bankily)" : "Bankily (BPM)",
         bank: isArabic ? "البنك الشعبي الموريتاني" : "Banque Populaire de Mauritanie",
-        logo: bankilyLogoImg,
+        logo: customLogoUrl || bankilyLogoImg,
       }
-    : {
+    : isSadad
+    ? {
         name: isArabic ? "سداد (Sedad)" : "Sedad (BIM)",
         bank: isArabic ? "البنك الإسلامي الموريتاني" : "Banque Islamique de Mauritanie",
-        logo: sadadLogoImg,
+        logo: customLogoUrl || sadadLogoImg,
+      }
+    : isGaza
+    ? {
+        name: isArabic ? "غزة باي (GazaPay)" : "GazaPay",
+        bank: isArabic ? "محفظة غزة كاش الرقمية" : "Portefeuille Électronique GazaPay",
+        logo: customLogoUrl || gazaLogoImg,
+      }
+    : {
+        name: isArabic ? (serviceTitle || "وسيلة دفع إلكترونية") : "Paiement en ligne",
+        bank: isArabic ? "خدمة بنكية معتمدة" : "Service bancaire agréé",
+        logo: customLogoUrl || bankilyLogoImg,
       };
 
   // Official verified default numbers

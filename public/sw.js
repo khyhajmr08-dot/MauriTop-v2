@@ -1,5 +1,5 @@
-const CACHE_NAME = 'mauritop-static-v2';
-const IMAGE_CACHE_NAME = 'mauritop-images-v2';
+const CACHE_NAME = 'mauritop-static-v3';
+const IMAGE_CACHE_NAME = 'mauritop-images-v3';
 
 // Assets to pre-cache on install
 const PRECACHE_ASSETS = [

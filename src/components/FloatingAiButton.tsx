@@ -9,8 +9,12 @@ export const FloatingAiButton: React.FC = () => {
   const { language, isRtl } = useLanguage();
   const isArabic = language === 'ar';
 
-  // Do not show button on admin routes or when already on the AI Assistant page
-  if (location.pathname.startsWith('/admin') || location.pathname === '/assistant') {
+  // Do not show button on admin routes, services checkout, or when already on the AI Assistant page
+  if (
+    location.pathname.startsWith('/admin') ||
+    location.pathname.startsWith('/services/') ||
+    location.pathname === '/assistant'
+  ) {
     return null;
   }
 
@@ -20,8 +24,8 @@ export const FloatingAiButton: React.FC = () => {
       aria-label={isArabic ? "المساعد الذكي" : "Assistant IA"}
       title={isArabic ? "تحدث مع المساعد الذكي لموري توب" : "Discuter avec l'assistant IA"}
       className={cn(
-        "fixed z-40 flex items-center justify-center w-14 h-14 bg-[#0E1626]/95 border border-emerald-500/40 text-white rounded-full shadow-2xl hover:border-emerald-400 hover:bg-[#121D31] transition-all duration-300 active:scale-90 cursor-pointer backdrop-blur-xl group",
-        "bottom-24 left-4 md:bottom-8 md:left-8"
+        "fixed z-40 flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 bg-[#0B1120]/95 border border-emerald-500/40 text-white rounded-full shadow-2xl hover:border-emerald-400 hover:bg-[#0E1626] transition-all duration-300 active:scale-90 cursor-pointer backdrop-blur-xl group",
+        "bottom-20 left-3 sm:bottom-24 sm:left-4 md:bottom-8 md:left-8"
       )}
       dir={isRtl ? "rtl" : "ltr"}
     >
