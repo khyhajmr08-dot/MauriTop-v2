@@ -5,6 +5,12 @@ import { OFFICIAL_PHONE } from "../constants";
 
 export type PaymentMethodType = "manual_wallet" | "electronic_gateway" | "digital_card";
 
+export type PaymentIntegrationStatus =
+  | "disabled"
+  | "enabled_unconfigured"
+  | "configured_testing"
+  | "operational";
+
 export interface PaymentMethodConfig {
   id: "bankily" | "sadad" | "gaza" | string;
   label: string;
@@ -14,6 +20,7 @@ export interface PaymentMethodConfig {
   accountHolderAr: string;
   accountHolderFr: string;
   enabled: boolean;
+  integrationStatus?: PaymentIntegrationStatus;
   hidden?: boolean;
   type?: PaymentMethodType;
   instructionsAr?: string;
@@ -68,10 +75,28 @@ export const DEFAULT_PAYMENT_CONFIGS: PaymentSettingsMap = {
     enabled: true,
     hidden: false,
     type: "manual_wallet",
+    integrationStatus: "operational",
     unavailableReasonAr: "غير متوفر حالياً",
     unavailableReasonFr: "Actuellement indisponible",
     descAr: "الدفع الفوري والمباشر عبر محفظة غزة باي / غزة كاش",
     descFr: "Paiement instantané via GazaPay"
+  },
+  paypal: {
+    id: "paypal",
+    label: "PayPal",
+    labelAr: "بايبال (PayPal)",
+    labelFr: "PayPal",
+    phone: "",
+    accountHolderAr: "غير مهيأ بعد",
+    accountHolderFr: "Non configuré",
+    enabled: false,
+    hidden: true,
+    type: "electronic_gateway",
+    integrationStatus: "enabled_unconfigured",
+    unavailableReasonAr: "بوابة الدفع الإلكتروني عبر PayPal قيد التهيئة والربط البرمجي",
+    unavailableReasonFr: "Passerelle PayPal en cours de configuration",
+    descAr: "الدفع الإلكتروني بالبطاقات البنكية الدولية وحساب بايبال",
+    descFr: "Paiement en ligne par carte et PayPal"
   }
 };
 

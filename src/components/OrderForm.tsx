@@ -7,7 +7,7 @@ import { useLanguage } from "../contexts/LanguageContext";
 import { useAuth } from "../lib/useAuth";
 import { collection, doc, setDoc, serverTimestamp, query, orderBy, getDocs } from "firebase/firestore";
 import { db, storage } from "../lib/firebase";
-import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { deleteObject, getDownloadURL, ref, uploadBytes, uploadBytesResumable } from "firebase/storage";
 import { cacheService } from "../lib/cache";
 import { handleFirestoreError, OperationType, compressImage, haptic, cn, isValidImageUrl } from "../lib/utils";
 import { getFallbackServiceImage, resolveServiceImage } from "../lib/serviceImages";
@@ -162,6 +162,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
   const PAYMENT_POSTS = useMemo(() => {
     return Object.entries(paymentSettings)
       .filter(([_, config]) => !config.hidden)
+      // Only show gateways if operational; unconfigured gateways remain invisible or disabled
+      .filter(([_, config]) => config.type !== "electronic_gateway" || config.integrationStatus === "operational")
       .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
       .map(([key, config]) => ({
         id: key,
@@ -170,7 +172,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
         labelAr: config.labelAr || key,
         desc: config.descFr || "",
         descAr: config.descAr || "الدفع المباشر",
-        active: config.enabled !== false,
+        active: config.enabled !== false && (config.type !== "electronic_gateway" || config.integrationStatus === "operational"),
         unavailableReasonAr: config.unavailableReasonAr || "غير متوفر حالياً",
         unavailableReasonFr: config.unavailableReasonFr || "Actuellement indisponible",
         phone: config.phone || ""
@@ -534,36 +536,40 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           throw new Error(language === 'ar' ? "نوع صورة الإيصال غير مدعوم" : "Type de fichier justificatif non pris en charge");
         }
 
-        setUploadProgress(1);
-        setProcessingStatus(language === 'ar' ? "جاري معالجة صورة الإيصال..." : "Traitement de l'image...");
-
-        const rawBase64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const value = typeof event.target?.result === "string" ? event.target.result : "";
-            if (!value.startsWith("data:image/")) reject(new Error("Invalid receipt image data"));
-            else resolve(value);
-          };
-          reader.onerror = () => reject(new Error("File read error"));
-          reader.readAsDataURL(file);
-        });
-
-        const compressedBase64 = await compressImage(rawBase64, 1000, 1000, 0.62).catch(() => rawBase64);
-        const imageResponse = await fetch(compressedBase64);
-        if (!imageResponse.ok) throw new Error("Could not process receipt image");
-        const imageBlob = await imageResponse.blob();
-        if (!imageBlob.type.startsWith("image/") || imageBlob.size === 0 || imageBlob.size > 8 * 1024 * 1024) {
-          throw new Error(language === 'ar' ? "تعذر تجهيز صورة الإيصال؛ اختر صورة أصغر" : "Impossible de préparer le justificatif; choisissez une image plus petite");
-        }
+        setUploadProgress(10);
+        setProcessingStatus(language === 'ar' ? "جاري رفع صورة الإيصال..." : "Téléchargement du justificatif...");
 
         const receiptUserId = user ? user.uid : "guest";
         uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}_${Date.now()}.jpg`;
         const receiptRef = ref(storage, uploadedReceiptPath);
-        const uploadedSnapshot = await uploadBytes(receiptRef, imageBlob, {
-          contentType: imageBlob.type || "image/jpeg",
+
+        // Upload directly using uploadBytesResumable to track genuine progress without FileReader failures
+        const uploadTask = uploadBytesResumable(receiptRef, file, {
+          contentType: file.type || "image/jpeg",
           customMetadata: { ownerUid: receiptUserId, orderId: orderRef.id }
         });
-        uploadedUrl = await getDownloadURL(uploadedSnapshot.ref);
+
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+              setUploadProgress(Math.max(10, Math.min(progress, 95)));
+              setProcessingStatus(
+                language === 'ar'
+                  ? `جاري رفع صورة الإيصال (${progress}%)...`
+                  : `Téléchargement (${progress}%)...`
+              );
+            },
+            (err) => {
+              console.error("Receipt upload error:", err);
+              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى المحاولة ثانية" : "Erreur de téléchargement"));
+            },
+            () => resolve()
+          );
+        });
+
+        uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
         setUploadProgress(100);
         setProcessingStatus(language === 'ar' ? "جاري حفظ وتأكيد الطلب..." : "Confirmation...");
       } else {

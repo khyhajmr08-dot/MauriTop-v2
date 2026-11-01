@@ -159,9 +159,9 @@ service cloud.firestore {
         (
           (request.resource.data.paymentMethod == 'quote' && request.resource.data.amount == 0 && request.resource.data.proofImageUrl == '') ||
           (
-            request.resource.data.paymentMethod in ['bankily', 'sadad'] &&
             request.resource.data.amount > 0 &&
             request.resource.data.senderPhone is string && request.resource.data.senderPhone.size() >= 8 &&
+            request.resource.data.paymentMethod.size() > 0 &&
             request.resource.data.proofImageUrl.matches('https://firebasestorage.googleapis.com/.*')
           )
         );

@@ -361,29 +361,36 @@ export const AdminPaymentManager: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Status Toggle Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleToggleStatus(key)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer border",
-                      isEnabled
-                        ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30"
-                        : "bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30"
+                  {/* Status Toggle & Integration Badge */}
+                  <div className="flex flex-col items-end gap-1.5">
+                    {method.type === "electronic_gateway" && method.integrationStatus !== "operational" && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                        غير مهيأ بعد (يحتاج ربط API)
+                      </span>
                     )}
-                  >
-                    {isEnabled ? (
-                      <>
-                        <CheckCircle2 size={13} />
-                        <span>مفعل</span>
-                      </>
-                    ) : (
-                      <>
-                        <XCircle size={13} />
-                        <span>معطل</span>
-                      </>
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStatus(key)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer border",
+                        isEnabled
+                          ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30"
+                          : "bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30"
+                      )}
+                    >
+                      {isEnabled ? (
+                        <>
+                          <CheckCircle2 size={13} />
+                          <span>مفعل</span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle size={13} />
+                          <span>معطل</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Account Number / Phone Field */}
