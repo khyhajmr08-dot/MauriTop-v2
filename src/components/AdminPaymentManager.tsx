@@ -10,7 +10,8 @@ import {
   RotateCcw,
   Check,
   Upload,
-  Loader2
+  Loader2,
+  Plus
 } from "lucide-react";
 import { useToast } from "../contexts/ToastContext";
 import { cn } from "../lib/utils";
@@ -35,6 +36,69 @@ export const AdminPaymentManager: React.FC = () => {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newMethodForm, setNewMethodForm] = useState<{
+    id: string;
+    label: string;
+    labelAr: string;
+    phone: string;
+    accountHolderAr: string;
+    descAr: string;
+  }>({
+    id: "",
+    label: "",
+    labelAr: "",
+    phone: "",
+    accountHolderAr: "موري توب للاستلام",
+    descAr: ""
+  });
+
+  const handleCreateMethod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanId = newMethodForm.id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!cleanId || !newMethodForm.labelAr.trim()) {
+      showToast("يرجى إدخال معرف واسم وسيلة الدفع", "error");
+      return;
+    }
+
+    const updated = {
+      ...settings,
+      [cleanId]: {
+        id: cleanId,
+        label: newMethodForm.label.trim() || cleanId,
+        labelAr: newMethodForm.labelAr.trim(),
+        labelFr: newMethodForm.label.trim() || cleanId,
+        phone: newMethodForm.phone.trim(),
+        accountHolderAr: newMethodForm.accountHolderAr.trim(),
+        accountHolderFr: "MauriTop Réception",
+        enabled: true,
+        type: "manual_wallet" as const,
+        descAr: newMethodForm.descAr.trim() || "الدفع المباشر",
+        descFr: "Paiement direct",
+        unavailableReasonAr: "غير متوفر حالياً",
+        unavailableReasonFr: "Actuellement indisponible",
+        order: Object.keys(settings).length + 1
+      }
+    };
+
+    try {
+      setSettings(updated);
+      await savePaymentSettings(updated);
+      showToast(`تمت إضافة وتفعيل وسيلة الدفع (${newMethodForm.labelAr}) بنجاح!`, "success");
+      setShowAddModal(false);
+      setNewMethodForm({
+        id: "",
+        label: "",
+        labelAr: "",
+        phone: "",
+        accountHolderAr: "موري توب للاستلام",
+        descAr: ""
+      });
+    } catch (err: any) {
+      console.error("Add payment method error:", err);
+      showToast("فشل إضافة وسيلة الدفع في قاعدة البيانات", "error");
+    }
+  };
 
   const handleLogoUpload = async (key: string, file: File) => {
     if (!file) return;
@@ -88,15 +152,34 @@ export const AdminPaymentManager: React.FC = () => {
     }));
   };
 
-  const handleToggleStatus = (methodId: string) => {
+  const handleToggleStatus = async (methodId: string) => {
     const current = settings[methodId]?.enabled !== false;
-    handleFieldChange(methodId, "enabled", !current);
-    showToast(
-      !current 
-        ? `تم تفعيل استقبال الشحن عبر ${settings[methodId]?.labelAr || methodId} بنجاح` 
-        : `تم تعطيل الشحن عبر ${settings[methodId]?.labelAr || methodId} (سيظهر للزبائن: غير متوفر)`,
-      !current ? "success" : "info"
-    );
+    const nextState = !current;
+
+    // Optimistic update
+    const updated = {
+      ...settings,
+      [methodId]: {
+        ...settings[methodId],
+        enabled: nextState
+      }
+    };
+    setSettings(updated);
+
+    try {
+      await savePaymentSettings(updated);
+      showToast(
+        nextState
+          ? `تم تفعيل استقبال الشحن عبر ${settings[methodId]?.labelAr || methodId} وحفظه في Firestore بنجاح`
+          : `تم تعطيل الشحن عبر ${settings[methodId]?.labelAr || methodId} وحفظه في Firestore (غير متوفر للزبائن)`,
+        nextState ? "success" : "info"
+      );
+    } catch (err: any) {
+      console.error("Auto-save toggle error:", err);
+      // Revert on failure
+      setSettings(settings);
+      showToast("فشل حفظ حالة وسيلة الدفع في Firestore", "error");
+    }
   };
 
   const handleSaveAll = async () => {
@@ -178,6 +261,15 @@ export const AdminPaymentManager: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-2xl font-black text-xs transition-all flex items-center gap-2 cursor-pointer active:scale-95 shadow-lg shadow-emerald-500/20"
+          >
+            <Plus size={16} />
+            <span>إضافة وسيلة دفع جديدة</span>
+          </button>
+
           <button
             type="button"
             onClick={handleResetDefaults}
@@ -367,6 +459,82 @@ export const AdminPaymentManager: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Modal: Add New Payment Method */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full text-white shadow-2xl relative">
+            <h3 className="text-lg font-black mb-4 flex items-center gap-2">
+              <Plus size={20} className="text-emerald-400" />
+              <span>إضافة وسيلة دفع جديدة للنظام</span>
+            </h3>
+
+            <form onSubmit={handleCreateMethod} className="space-y-4 text-xs font-bold">
+              <div>
+                <label className="text-slate-400 block mb-1">المعرف البرمجي (بالحروف الإنجليزية، مثال: masrvi أو click)</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="masrvi"
+                  value={newMethodForm.id}
+                  onChange={(e) => setNewMethodForm({ ...newMethodForm, id: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">الاسم بالعربية (مثال: مصرفي أو كليك)</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="مصرفي (Masrvi)"
+                  value={newMethodForm.labelAr}
+                  onChange={(e) => setNewMethodForm({ ...newMethodForm, labelAr: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">رقم الحساب / الهاتف للاستلام</label>
+                <input
+                  type="text"
+                  placeholder="رقم الهاتف أو الحساب"
+                  value={newMethodForm.phone}
+                  onChange={(e) => setNewMethodForm({ ...newMethodForm, phone: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">تعليمات التحويل للعميل</label>
+                <input
+                  type="text"
+                  placeholder="التحويل المباشر عبر التطبيق..."
+                  value={newMethodForm.descAr}
+                  onChange={(e) => setNewMethodForm({ ...newMethodForm, descAr: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black cursor-pointer shadow-lg shadow-emerald-500/20"
+                >
+                  حفظ وتفعيل الوسيلة
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

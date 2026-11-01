@@ -161,10 +161,6 @@ async function startServer() {
       const decodedUrl = decodeURIComponent(proofUrl);
       const match = decodedUrl.match(/\/o\/([^?#]+)/);
       if (!match || !match[1]) {
-        // Fallback check if it's a direct https URL under firebasestorage
-        if (proofUrl.startsWith("https://firebasestorage.googleapis.com/")) {
-          return { valid: true };
-        }
         return { valid: false, error: 'Invalid storage URL format' };
       }
       const storagePath = match[1];
@@ -185,9 +181,8 @@ async function startServer() {
       }
       return { valid: true };
     } catch (err: any) {
-      console.warn("Storage receipt verification error:", err);
-      // Soft-allow if network/credential is constrained in dev environment
-      return { valid: true };
+      console.error("Storage receipt verification error:", err);
+      return { valid: false, error: 'فشل التحقق من إيصال الدفع في التخزين السحابي' };
     }
   };
 
@@ -230,6 +225,17 @@ async function startServer() {
       }
       if (isNaN(verifiedAmount) || verifiedAmount <= 0) {
         return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
+      }
+
+      // Verify payment method in Firestore settings
+      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+      if (settingsDoc.exists) {
+        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
+        const methodConf = methodsData[normalizedMethodKey];
+        if (methodConf && methodConf.enabled === false) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
+        }
       }
 
       // 2. Receipt verification for manual payment
@@ -301,6 +307,92 @@ async function startServer() {
     } catch (err: any) {
       console.error("Guest order error:", err);
       return res.status(500).json({ error: 'تعذر معالجة الطلب حالياً. يرجى المحاولة لاحقاً.' });
+    }
+  });
+
+  // Authenticated Order Creation Endpoint
+  app.post("/api/orders/create", requireActiveUser, rateLimit(10, 60_000), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const {
+        orderId,
+        serviceId,
+        serviceType,
+        paymentMethod,
+        senderPhone,
+        senderRef,
+        proofImageUrl,
+        accountDetails,
+        fields,
+        amount
+      } = req.body || {};
+
+      const cleanPhone = String(senderPhone || '').replace(/\D/g, '');
+      if (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone)) {
+        return res.status(400).json({ error: 'رقم هاتف غير صالح.' });
+      }
+
+      const firestore = getDb();
+      const serviceDoc = await firestore.collection("services").doc(serviceId).get();
+      if (!serviceDoc.exists) {
+        return res.status(404).json({ error: 'الخدمة غير موجودة.' });
+      }
+      const sData = serviceDoc.data() || {};
+
+      let verifiedAmount = Number(amount || 0);
+      if (sData.pricingMode === "fixed") {
+        verifiedAmount = Number(sData.priceMru || sData.price || 0);
+      }
+
+      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+      if (settingsDoc.exists) {
+        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
+        const methodConf = methodsData[normalizedMethodKey];
+        if (methodConf && methodConf.enabled === false) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
+        }
+      }
+
+      if (['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
+        if (!proofImageUrl || typeof proofImageUrl !== 'string') {
+          return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
+        }
+        const receiptCheck = await verifyStorageReceipt(proofImageUrl);
+        if (!receiptCheck.valid) {
+          return res.status(400).json({ error: receiptCheck.error || 'إيصال الدفع غير صالح.' });
+        }
+      }
+
+      const orderRef = firestore.collection("orders").doc(orderId || undefined);
+      const now = admin.firestore.Timestamp.now();
+      await orderRef.set({
+        id: orderRef.id,
+        userId: user.uid,
+        userName: user.name || user.email?.split('@')[0] || 'User',
+        userEmail: user.email || '',
+        serviceId,
+        serviceType: serviceType || sData.name || serviceId,
+        serviceTitleAr: sData.titleAr || sData.nameAr || serviceId,
+        amount: verifiedAmount,
+        fee: 0,
+        total: verifiedAmount,
+        paymentMethod: paymentMethod || 'bankily',
+        senderPhone: cleanPhone,
+        senderRef: senderRef || '',
+        proofImageUrl: proofImageUrl || '',
+        proofUrl: proofImageUrl || '',
+        accountDetails: accountDetails || '',
+        fields: fields || {},
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      return res.status(201).json({ success: true, orderId: orderRef.id });
+    } catch (err: any) {
+      console.error("Auth order error:", err);
+      return res.status(500).json({ error: 'خطأ أثناء إنشاء الطلب.' });
     }
   });
 

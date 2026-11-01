@@ -153,44 +153,29 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
     }
   }, [paymentSettings, paymentMethod]);
 
-  const PAYMENT_POSTS = useMemo(() => [
-    { 
-      id: "bankily" as const, 
-      logo: paymentSettings.bankily?.logoUrl || bankilyLogoImg,
-      label: paymentSettings.bankily?.label || "Bankily", 
-      labelAr: paymentSettings.bankily?.labelAr || "بنكيلي", 
-      desc: "Instant transfer via Bankily app", 
-      descAr: paymentSettings.bankily?.descAr || "الدفع الفوري السريع عبر تطبيق بنكيلي", 
-      active: paymentSettings.bankily?.enabled !== false,
-      unavailableReasonAr: paymentSettings.bankily?.unavailableReasonAr || "غير متوفر حالياً",
-      unavailableReasonFr: paymentSettings.bankily?.unavailableReasonFr || "Actuellement indisponible",
-      phone: paymentSettings.bankily?.phone || "32014902"
-    },
-    { 
-      id: "sadad" as const, 
-      logo: paymentSettings.sadad?.logoUrl || sadadLogoImg,
-      label: paymentSettings.sadad?.label || "Sedad", 
-      labelAr: paymentSettings.sadad?.labelAr || "سداد", 
-      desc: "Fast transfer via Sedad", 
-      descAr: paymentSettings.sadad?.descAr || "التحويل السريع والمباشر عبر سداد", 
-      active: paymentSettings.sadad?.enabled !== false,
-      unavailableReasonAr: paymentSettings.sadad?.unavailableReasonAr || "غير متوفر حالياً",
-      unavailableReasonFr: paymentSettings.sadad?.unavailableReasonFr || "Actuellement indisponible",
-      phone: paymentSettings.sadad?.phone || "27329380"
-    },
-    {
-      id: "gaza" as const,
-      logo: paymentSettings.gaza?.logoUrl || gazaLogoImg,
-      label: paymentSettings.gaza?.label || "GazaPay",
-      labelAr: paymentSettings.gaza?.labelAr || "غزة باي",
-      desc: "Transfer via GazaPay",
-      descAr: paymentSettings.gaza?.descAr || "التحويل المباشر عبر غزة باي",
-      active: paymentSettings.gaza?.enabled === true,
-      unavailableReasonAr: paymentSettings.gaza?.unavailableReasonAr || "غير متوفر حالياً",
-      unavailableReasonFr: paymentSettings.gaza?.unavailableReasonFr || "Actuellement indisponible",
-      phone: paymentSettings.gaza?.phone || "27329380"
-    }
-  ], [paymentSettings]);
+  const defaultMethodLogos: Record<string, string> = {
+    bankily: bankilyLogoImg,
+    sadad: sadadLogoImg,
+    gaza: gazaLogoImg
+  };
+
+  const PAYMENT_POSTS = useMemo(() => {
+    return Object.entries(paymentSettings)
+      .filter(([_, config]) => !config.hidden)
+      .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
+      .map(([key, config]) => ({
+        id: key,
+        logo: config.logoUrl || defaultMethodLogos[key] || "",
+        label: config.label || key,
+        labelAr: config.labelAr || key,
+        desc: config.descFr || "",
+        descAr: config.descAr || "الدفع المباشر",
+        active: config.enabled !== false,
+        unavailableReasonAr: config.unavailableReasonAr || "غير متوفر حالياً",
+        unavailableReasonFr: config.unavailableReasonFr || "Actuellement indisponible",
+        phone: config.phone || ""
+      }));
+  }, [paymentSettings]);
 
   const currentPaymentConfig = paymentSettings[paymentMethod] || paymentSettings.bankily || DEFAULT_PAYMENT_CONFIGS.bankily;
 
@@ -612,27 +597,74 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
 
         setGuestTrackingToken(guestResult.trackingToken);
       } else {
-        // Authenticated customer submission via Firestore SDK
-        await setDoc(orderRef, {
-          userId: user.uid,
-          userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
-          userEmail: user.email || "",
-          serviceId: service.id,
-          serviceType: service.nameAr || service.name,
-          amount: isQuoteMode ? 0 : Number(amount),
-          fee: 0,
-          total: isQuoteMode ? 0 : Number(amount),
-          accountDetails: detailsText,
-          fields: fieldValues,
-          status: 'pending',
-          proofImageUrl: uploadedUrl,
-          proofUrl: uploadedUrl,
-          paymentMethod: isQuoteMode ? "quote" : paymentMethod,
-          senderPhone: cleanSenderPhone,
-          senderRef: senderReference,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+        // Authenticated customer submission: route through the backend if token available or setDoc
+        try {
+          const idToken = await user.getIdToken();
+          const authOrderResponse = await fetch("/api/orders/create", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+              orderId: orderRef.id,
+              serviceId: service.id,
+              serviceType: service.nameAr || service.name,
+              amount: isQuoteMode ? 0 : Number(amount),
+              paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+              senderPhone: cleanSenderPhone,
+              senderRef: senderReference,
+              proofImageUrl: uploadedUrl,
+              accountDetails: detailsText,
+              fields: fieldValues
+            })
+          });
+
+          if (!authOrderResponse.ok) {
+            // Direct setDoc fallback respecting firestore.rules
+            await setDoc(orderRef, {
+              userId: user.uid,
+              userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
+              userEmail: user.email || "",
+              serviceId: service.id,
+              serviceType: service.nameAr || service.name,
+              amount: isQuoteMode ? 0 : Number(amount),
+              fee: 0,
+              total: isQuoteMode ? 0 : Number(amount),
+              accountDetails: detailsText,
+              fields: fieldValues,
+              status: 'pending',
+              proofImageUrl: uploadedUrl,
+              proofUrl: uploadedUrl,
+              paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+              senderPhone: cleanSenderPhone,
+              senderRef: senderReference,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch {
+          await setDoc(orderRef, {
+            userId: user.uid,
+            userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
+            userEmail: user.email || "",
+            serviceId: service.id,
+            serviceType: service.nameAr || service.name,
+            amount: isQuoteMode ? 0 : Number(amount),
+            fee: 0,
+            total: isQuoteMode ? 0 : Number(amount),
+            accountDetails: detailsText,
+            fields: fieldValues,
+            status: 'pending',
+            proofImageUrl: uploadedUrl,
+            proofUrl: uploadedUrl,
+            paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+            senderPhone: cleanSenderPhone,
+            senderRef: senderReference,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
       }
 
       // The receipt is now associated with a persisted order; do not clean it up.
