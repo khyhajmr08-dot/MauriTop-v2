@@ -601,10 +601,9 @@ async function startServer() {
   app.post("/api/indexnow/submit", requireOwner, rateLimit(10, 60_000), async (req, res) => {
     try {
       const { urls, host } = req.body || {};
-      const targetHost = "mauritop.com";
-      if (host && String(host).toLowerCase() !== targetHost) {
-        return res.status(400).json({ success: false, error: "Only the configured canonical host is allowed." });
-      }
+      // Accept either canonical production domain or provided vercel host
+      const allowedHosts = ["mauritop.com", "mauritop-v2-4ozx.vercel.app"];
+      const targetHost = (host && allowedHosts.includes(String(host).toLowerCase())) ? String(host).toLowerCase() : "mauritop.com";
       const apiKey = "mauritop2026indexnowkey884729";
       const keyLocation = `https://${targetHost}/mauritop2026indexnowkey.txt`;
 

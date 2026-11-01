@@ -536,8 +536,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           throw new Error(language === 'ar' ? "نوع صورة الإيصال غير مدعوم" : "Type de fichier justificatif non pris en charge");
         }
 
-        setUploadProgress(10);
-        setProcessingStatus(language === 'ar' ? "جاري رفع صورة الإيصال..." : "Téléchargement du justificatif...");
+        setUploadProgress(0);
+        setProcessingStatus(language === 'ar' ? "جاري تهيئة رفع صورة الإيصال..." : "Initialisation du transfert...");
 
         const receiptUserId = user ? user.uid : "guest";
         uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}_${Date.now()}.jpg`;
@@ -550,28 +550,40 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
         });
 
         await new Promise<void>((resolve, reject) => {
+          // Timeout safeguards upload from hanging indefinitely
+          const timeout = setTimeout(() => {
+            try { uploadTask.cancel(); } catch {}
+            reject(new Error(language === 'ar' ? "استغرق رفع الإيصال وقتاً طويلاً، يرجى المحاولة ثانية" : "Délai d'attente de téléchargement dépassé"));
+          }, 60000);
+
           uploadTask.on(
             "state_changed",
             (snapshot) => {
-              const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-              setUploadProgress(Math.max(10, Math.min(progress, 95)));
-              setProcessingStatus(
-                language === 'ar'
-                  ? `جاري رفع صورة الإيصال (${progress}%)...`
-                  : `Téléchargement (${progress}%)...`
-              );
+              if (snapshot.totalBytes > 0) {
+                const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                setUploadProgress(Math.min(progress, 100));
+                setProcessingStatus(
+                  language === 'ar'
+                    ? `جاري نقل بيانات الإيصال (${progress}%)...`
+                    : `Transfert (${progress}%)...`
+                );
+              }
             },
             (err) => {
+              clearTimeout(timeout);
               console.error("Receipt upload error:", err);
-              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى المحاولة ثانية" : "Erreur de téléchargement"));
+              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى التحقق من اتصالك والمحاولة مجدداً" : "Erreur de téléchargement"));
             },
-            () => resolve()
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            }
           );
         });
 
         uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
         setUploadProgress(100);
-        setProcessingStatus(language === 'ar' ? "جاري حفظ وتأكيد الطلب..." : "Confirmation...");
+        setProcessingStatus(language === 'ar' ? "تم رفع الإيصال بنجاح! جاري تأكيد الطلب..." : "Reçu envoyé ! Confirmation en cours...");
       } else {
         setProcessingStatus(language === 'ar' ? "جاري إرسال الطلب..." : "Envoi...");
       }
