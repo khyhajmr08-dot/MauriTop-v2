@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { useAuth } from "../lib/useAuth";
 import { useLanguage } from "../contexts/LanguageContext";
 import { 
@@ -12,7 +14,8 @@ import {
   Calculator, 
   Menu, 
   X,
-  ClipboardList
+  ClipboardList,
+  Bell
 } from "lucide-react";
 import { OFFICIAL_PHONE } from "../constants";
 
@@ -21,8 +24,44 @@ export const Navbar: React.FC = () => {
   const { language, toggleLanguage, isRtl } = useLanguage();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
 
   const isArabic = language === "ar";
+
+  useEffect(() => {
+    if (!user) {
+      // For guest visitors, check unread status from local cache or default to 0
+      try {
+        const guestTrackCount = localStorage.getItem("guest_unread_notifications");
+        setUnreadNotificationsCount(guestTrackCount ? parseInt(guestTrackCount, 10) || 0 : 0);
+      } catch {
+        setUnreadNotificationsCount(0);
+      }
+      return;
+    }
+
+    try {
+      const q = query(
+        collection(db, "notifications"),
+        where("userId", "==", user.uid)
+      );
+
+      const unsubscribe = onSnapshot(
+        q,
+        (snap) => {
+          const unreadCount = snap.docs.filter((d) => !d.data().read).length;
+          setUnreadNotificationsCount(unreadCount);
+        },
+        (err) => {
+          console.warn("Notifications count listener error:", err);
+        }
+      );
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn("Failed to attach notifications listener in Navbar:", err);
+    }
+  }, [user]);
 
   const closeMenu = () => setMobileMenuOpen(false);
 
@@ -113,6 +152,22 @@ export const Navbar: React.FC = () => {
               <span className="hidden sm:inline">{isArabic ? "لوحة المشرف" : "Admin"}</span>
             </Link>
           )}
+
+          {/* Notifications Bell */}
+          <Link
+            to="/notifications"
+            onClick={closeMenu}
+            aria-label={isArabic ? "الإشعارات والتنبيهات" : "Notifications"}
+            className="relative p-1.5 xs:px-2 xs:py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white border border-white/10 text-[11px] sm:text-xs font-semibold transition-colors shrink-0"
+            title={isArabic ? "مركز التنبيهات" : "Centre de notifications"}
+          >
+            <Bell className="w-4 h-4 text-slate-300" />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-black text-white shadow-sm ring-1 ring-[#070B14]">
+                {unreadNotificationsCount > 99 ? "99+" : unreadNotificationsCount}
+              </span>
+            )}
+          </Link>
 
           {/* WhatsApp Support Direct Button */}
           <a
@@ -210,6 +265,21 @@ export const Navbar: React.FC = () => {
             className="block py-2 px-3 rounded-lg text-xs font-bold text-slate-200 hover:bg-white/[0.05]"
           >
             {isArabic ? "تواصل والدعم الفني" : "Contact & Support"}
+          </Link>
+          <Link
+            to="/notifications"
+            onClick={closeMenu}
+            className="flex items-center justify-between py-2 px-3 rounded-lg text-xs font-bold text-slate-200 hover:bg-white/[0.05]"
+          >
+            <div className="flex items-center gap-2">
+              <Bell className="w-4 h-4 text-emerald-400" />
+              <span>{isArabic ? "الإشعارات والتنبيهات" : "Notifications"}</span>
+            </div>
+            {unreadNotificationsCount > 0 && (
+              <span className="h-5 min-w-[20px] px-1.5 flex items-center justify-center rounded-full bg-rose-500 text-[10px] font-black text-white">
+                {unreadNotificationsCount}
+              </span>
+            )}
           </Link>
           {user && (
             <button
