@@ -715,7 +715,7 @@ async function startServer() {
   // Secure context-aware text chatbot route
   app.post("/api/chat", rateLimit(20, 60_000), async (req, res) => {
     try {
-      const { contents } = req.body || {};
+      const { contents, conversationId, userId, userEmail, userName } = req.body || {};
       if (!Array.isArray(contents) || contents.length === 0 || contents.length > 20) {
         return res.status(400).json({ error: "Invalid contents parameter. Expected 1–20 messages." });
       }
@@ -728,13 +728,15 @@ async function startServer() {
         return res.status(413).json({ error: "Message payload is too large or malformed." });
       }
 
-      const client = getAi();
-      const response = await client.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents,
-        config: {
-          maxOutputTokens: 700,
-          systemInstruction: `أنت "المساعد الذكي" الرسمي لمنصة موري توب (Mouri Top)، وهي منصة لشحن الألعاب والاشتراكات الرقمية.
+      let generatedText = "";
+      try {
+        const client = getAi();
+        const response = await client.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents,
+          config: {
+            maxOutputTokens: 700,
+            systemInstruction: `أنت "المساعد الذكي" الرسمي لمنصة موري توب (Mouri Top)، وهي منصة لشحن الألعاب والاشتراكات الرقمية.
 
 هويتك وأسلوبك:
 - أنت خبير مبيعات ودعم فني محترف، ودود جداً، وصبور.
@@ -762,11 +764,60 @@ async function startServer() {
 - لا تكتفِ بالإجابة القصيرة، بل اقترح باقات توفيرية (مثلاً: "إذا كنت تشحن فري فاير باستمرار، أنصحك بعروض الـ 1000 جوهرة فهي توفر لك أكثر").
 - إذا كان العميل متردداً، أجب بمعلومات موثقة فقط ولا تختلق أرقام عملاء أو شهادات ثقة.
 - دائماً اختم بعبارة تشجيعية أو سؤال يساعده في الخطوة القادمة.`,
-          temperature: 0.7,
-        },
-      });
+            temperature: 0.7,
+          },
+        });
+        generatedText = response.text || "";
+      } catch (geminiError) {
+        console.warn("Gemini generation failed, using intelligent fallback:", geminiError);
+        generatedText = `🤖 **مساعد موري توب**\n\nأهلاً بك! نحن هنا لمساعدتك في شحن الألعاب والاشتراكات. يمكنك الاطلاع على وسائل الدفع المتاحة فعلياً في صفحة الدفع أو التواصل مع الدعم عبر واتساب (32014902).`;
+      }
 
-      return res.json({ text: response.text });
+      // Persist conversation to Firestore if conversationId is provided
+      if (conversationId && typeof conversationId === "string" && conversationId.length <= 128) {
+        try {
+          const firestore = getDb();
+          const convRef = firestore.collection("ai_conversations").doc(conversationId);
+          const existing = await convRef.get();
+
+          const lastUserMsg = contents[contents.length - 1]?.parts?.[0]?.text || "";
+          const newMessages = [
+            { role: "user", text: lastUserMsg, timestamp: new Date().toISOString() },
+            { role: "model", text: generatedText, timestamp: new Date().toISOString() }
+          ];
+
+          if (existing.exists) {
+            const data = existing.data();
+            const currentMsgs = Array.isArray(data?.messages) ? data.messages : [];
+            await convRef.update({
+              messages: [...currentMsgs, ...newMessages].slice(-50),
+              updatedAt: new Date().toISOString(),
+              lastMessage: generatedText.slice(0, 200),
+              lastUserMessage: lastUserMsg.slice(0, 200),
+              messageCount: (data?.messageCount || currentMsgs.length) + 2
+            });
+          } else {
+            await convRef.set({
+              conversationId,
+              userId: typeof userId === "string" ? userId : null,
+              userEmail: typeof userEmail === "string" ? userEmail : null,
+              userName: typeof userName === "string" ? userName : "زائر / عميل",
+              messages: newMessages,
+              status: "open", // open, resolved, escalated
+              internalNotes: "",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              lastMessage: generatedText.slice(0, 200),
+              lastUserMessage: lastUserMsg.slice(0, 200),
+              messageCount: 2
+            });
+          }
+        } catch (storageError) {
+          console.warn("Failed to persist conversation history to Firestore:", storageError);
+        }
+      }
+
+      return res.json({ text: generatedText });
     } catch (err: any) {
       console.error("Error in /api/chat:", err);
       
@@ -776,6 +827,49 @@ async function startServer() {
         text: fallbackText,
         isFallback: true 
       });
+    }
+  });
+
+  // Admin API: List and filter AI assistant conversations
+  app.get("/api/admin/ai-conversations", requireOwner, async (req, res) => {
+    try {
+      const firestore = getDb();
+      const status = typeof req.query.status === "string" ? req.query.status : null;
+
+      let q: FirebaseFirestore.Query = firestore.collection("ai_conversations");
+      if (status && ["open", "resolved", "escalated"].includes(status)) {
+        q = q.where("status", "==", status);
+      }
+
+      const snap = await q.orderBy("updatedAt", "desc").limit(100).get();
+      const conversations = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      return res.json({ conversations });
+    } catch (err: any) {
+      console.error("Error fetching AI conversations:", err);
+      return res.status(500).json({ error: "Failed to fetch conversations" });
+    }
+  });
+
+  // Admin API: Update conversation status and internal staff notes
+  app.patch("/api/admin/ai-conversations/:id", requireOwner, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, internalNotes } = req.body || {};
+
+      const updateData: any = { updatedAt: new Date().toISOString() };
+      if (status && ["open", "resolved", "escalated"].includes(status)) {
+        updateData.status = status;
+      }
+      if (typeof internalNotes === "string") {
+        updateData.internalNotes = internalNotes.slice(0, 5000);
+      }
+
+      const firestore = getDb();
+      await firestore.collection("ai_conversations").doc(id).update(updateData);
+      return res.json({ success: true, message: "Conversation updated successfully" });
+    } catch (err: any) {
+      console.error("Error updating AI conversation:", err);
+      return res.status(500).json({ error: "Failed to update conversation" });
     }
   });
 

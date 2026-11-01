@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import SEO from "../components/SEO";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useAuth } from "../lib/useAuth";
 import { Link, useNavigate } from "react-router-dom";
 import { 
   Bot, 
@@ -119,13 +120,24 @@ function generateOfflineFallbackText(query: string, isArabic: boolean): string {
 
 export default function AiAssistant() {
   const { language, isRtl } = useLanguage();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationId, setConversationId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<"all" | "games" | "subscriptions" | "utils">("all");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cid = localStorage.getItem("mauritop_ai_conversation_id");
+    if (!cid) {
+      cid = "conv_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now();
+      localStorage.setItem("mauritop_ai_conversation_id", cid);
+    }
+    setConversationId(cid);
+  }, []);
 
   const isArabic = language === "ar";
 
@@ -262,7 +274,13 @@ export default function AiAssistant() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ contents: formatHistory })
+        body: JSON.stringify({
+          contents: formatHistory,
+          conversationId: conversationId || undefined,
+          userId: user?.uid || null,
+          userEmail: user?.email || null,
+          userName: profile?.name || user?.displayName || (isArabic ? "زائر" : "Visiteur")
+        })
       });
 
       if (!res.ok) {

@@ -58,12 +58,14 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import { cn, formatMRU, formatDateSafe, formatNumberSpacing } from "../lib/utils";
 import { AdminSettings } from "../components/admin/AdminSettings";
 import { AdminPaymentManager } from "../components/AdminPaymentManager";
+import { AdminAiConversationsManager } from "../components/AdminAiConversationsManager";
 import { MarqueeManager } from "../components/admin/MarqueeManager";
 import { IndexNowManager } from "../components/admin/IndexNowManager";
 import AnimatedCounter from "../components/AnimatedCounter";
 import { OrderDetailsModal } from "../components/OrderDetailsModal";
 import { LiveVisitorsDashboard } from "../components/admin/LiveVisitorsDashboard";
 import SEO from "../components/SEO";
+import { Bot } from "lucide-react";
 
 // Lazy loaded sub-components to keep dashboard clean
 const ServicesManager = React.lazy(() => import("./ServicesManager"));
@@ -980,6 +982,7 @@ export default function AdminDashboard() {
           <NavItem id="live" label={isSidebarOpen ? "الزوار النشطين" : ""} icon={Activity} />
           <NavItem id="services" label={isSidebarOpen ? "إدارة الخدمات" : ""} icon={Sliders} />
           <NavItem id="posts" label={isSidebarOpen ? "عروض واتساب" : ""} icon={MessageSquare} />
+          <NavItem id="ai-conversations" label={isSidebarOpen ? "محادثات المساعد الذكي" : ""} icon={Bot} />
           <NavItem id="payment-methods" label={isSidebarOpen ? "طرق وتطبيقات الدفع" : ""} icon={CreditCard} />
           <NavItem id="indexnow" label={isSidebarOpen ? "فهرسة IndexNow" : ""} icon={Globe} />
           <NavItem id="notifications" label={isSidebarOpen ? "إرسال إشعارات" : ""} icon={Bell} />
@@ -1031,6 +1034,7 @@ export default function AdminDashboard() {
           <NavItem id="live" label="الزوار النشطين" icon={Activity} />
           <NavItem id="services" label="إدارة الخدمات" icon={Sliders} />
           <NavItem id="posts" label="عروض واتساب" icon={MessageSquare} />
+          <NavItem id="ai-conversations" label="محادثات المساعد الذكي" icon={Bot} />
           <NavItem id="payment-methods" label="طرق وتطبيقات الدفع" icon={CreditCard} />
           <NavItem id="indexnow" label="فهرسة IndexNow" icon={Globe} />
           <NavItem id="notifications" label="إرسال إشعارات" icon={Bell} />
@@ -1062,6 +1066,7 @@ export default function AdminDashboard() {
              activeTab === "live" ? "الزوار النشطين" : 
              activeTab === "services" ? "مركز الخدمات" :
              activeTab === "posts" ? "عروض واتساب الحصرية" : 
+             activeTab === "ai-conversations" ? "محادثات المساعد الذكي وملاحظات الدعم" :
              activeTab === "payment-methods" ? "إدارة طرق وتطبيقات الدفع" :
              activeTab === "indexnow" ? "فهرسة المحتوى الفورية (IndexNow API)" :
              activeTab === "marquee" ? "شريط الإعلانات العائم" :
@@ -2187,6 +2192,10 @@ export default function AdminDashboard() {
                   </form>
                 </div>
               </div>
+            )}
+
+            {activeTab === "ai-conversations" && (
+              <AdminAiConversationsManager />
             )}
 
             {activeTab === "payment-methods" && (
