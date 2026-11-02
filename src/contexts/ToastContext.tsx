@@ -66,8 +66,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       
-      {/* Toast Stack Container - Positioned bottom-right on desktop & above bottom navigation bar on mobile to avoid blocking navigation */}
-      <div className="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-6 z-[100] w-auto max-w-sm flex flex-col gap-2.5 pointer-events-none">
+      {/* Toast Stack Container - Positioned top-center/right with safe-area offset to avoid blocking checkout actions */}
+      <div className="fixed top-16 md:top-6 left-4 right-4 md:left-auto md:right-6 z-[100] w-auto max-w-sm flex flex-col gap-2.5 pointer-events-none">
         <AnimatePresence mode="popLayout">
           {toasts.map((t) => (
             <NotificationToast

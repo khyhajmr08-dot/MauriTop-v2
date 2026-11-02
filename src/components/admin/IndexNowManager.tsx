@@ -23,40 +23,47 @@ import { SEOAuditUtility } from './SEOAuditUtility';
 interface ServicePreset {
   id: string;
   name: string;
-  url: string;
+  path: string;
   category: 'primary' | 'service';
 }
 
-const PRESET_URLS: ServicePreset[] = [
-  { id: 'home', name: 'الصفحة الرئيسية', url: 'https://mauritop.com/', category: 'primary' },
-  { id: 'service-cards', name: 'بطاقات الخدمات والاشتراكات', url: 'https://mauritop.com/service-cards', category: 'primary' },
-  { id: 'calculator', name: 'حاسبة الكميات والأسعار', url: 'https://mauritop.com/calculator', category: 'primary' },
-  { id: 'contact', name: 'تواصل معنا والدعم', url: 'https://mauritop.com/contact', category: 'primary' },
-  { id: 'assistant', name: 'المساعد الذكي', url: 'https://mauritop.com/assistant', category: 'primary' },
-  { id: 'freefire', name: 'شحن فري فاير (Free Fire)', url: 'https://mauritop.com/services/freefire', category: 'service' },
-  { id: 'pubg', name: 'شحن شدات ببجي (PUBG Mobile)', url: 'https://mauritop.com/services/pubg', category: 'service' },
-  { id: 'netflix', name: 'اشتراكات نتفليكس (Netflix)', url: 'https://mauritop.com/services/netflix', category: 'service' },
-  { id: 'canva', name: 'اشتراك كانفا برو (Canva Pro)', url: 'https://mauritop.com/services/canva', category: 'service' },
-  { id: 'spotify', name: 'اشتراك سبوتيفاي (Spotify)', url: 'https://mauritop.com/services/spotify', category: 'service' },
-  { id: 'playstation', name: 'بطاقات بلايستيشن (PlayStation)', url: 'https://mauritop.com/services/playstation', category: 'service' },
-  { id: 'steam', name: 'بطاقات ستيم (Steam)', url: 'https://mauritop.com/services/steam', category: 'service' },
-  { id: 'googleplay', name: 'بطاقات جوجل بلاي (Google Play)', url: 'https://mauritop.com/services/googleplay', category: 'service' },
-  { id: 'apple', name: 'بطاقات أبل آيتونز (Apple iTunes)', url: 'https://mauritop.com/services/apple', category: 'service' },
-  { id: 'roblox', name: 'بطاقات روبلوكس (Roblox)', url: 'https://mauritop.com/services/roblox', category: 'service' },
-  { id: 'tiktok', name: 'شحن كوينز تيك توك (TikTok Coins)', url: 'https://mauritop.com/services/tiktok', category: 'service' },
+const PRESET_PATHS: ServicePreset[] = [
+  { id: 'home', name: 'الصفحة الرئيسية', path: '/', category: 'primary' },
+  { id: 'service-cards', name: 'بطاقات الخدمات والاشتراكات', path: '/service-cards', category: 'primary' },
+  { id: 'calculator', name: 'حاسبة الكميات والأسعار', path: '/calculator', category: 'primary' },
+  { id: 'contact', name: 'تواصل معنا والدعم', path: '/contact', category: 'primary' },
+  { id: 'assistant', name: 'المساعد الذكي', path: '/assistant', category: 'primary' },
+  { id: 'freefire', name: 'شحن فري فاير (Free Fire)', path: '/services/freefire', category: 'service' },
+  { id: 'pubg', name: 'شحن شدات ببجي (PUBG Mobile)', path: '/services/pubg', category: 'service' },
+  { id: 'netflix', name: 'اشتراكات نتفليكس (Netflix)', path: '/services/netflix', category: 'service' },
+  { id: 'canva', name: 'اشتراك كانفا برو (Canva Pro)', path: '/services/canva', category: 'service' },
+  { id: 'spotify', name: 'اشتراك سبوتيفاي (Spotify)', path: '/services/spotify', category: 'service' },
+  { id: 'playstation', name: 'بطاقات بلايستيشن (PlayStation)', path: '/services/playstation', category: 'service' },
+  { id: 'steam', name: 'بطاقات ستيم (Steam)', path: '/services/steam', category: 'service' },
+  { id: 'googleplay', name: 'بطاقات جوجل بلاي (Google Play)', path: '/services/googleplay', category: 'service' },
+  { id: 'apple', name: 'بطاقات أبل آيتونز (Apple iTunes)', path: '/services/apple', category: 'service' },
+  { id: 'roblox', name: 'بطاقات روبلوكس (Roblox)', path: '/services/roblox', category: 'service' },
+  { id: 'tiktok', name: 'شحن كوينز تيك توك (TikTok Coins)', path: '/services/tiktok', category: 'service' },
 ];
 
 export function IndexNowManager() {
   const { showToast } = useToast();
   const [activeMode, setActiveMode] = useState<'indexnow' | 'seo-audit'>('indexnow');
-  const [selectedUrls, setSelectedUrls] = useState<string[]>(PRESET_URLS.map(p => p.url));
+
+  // Use current host origin dynamically to avoid cross-host mismatch errors
+  const currentHost = window.location.hostname.includes("vercel.app")
+    ? "mauritop-v2-4ozx.vercel.app"
+    : "mauritop.com";
+  const baseUrl = `https://${currentHost}`;
+
+  const [selectedUrls, setSelectedUrls] = useState<string[]>(PRESET_PATHS.map(p => `${baseUrl}${p.path}`));
   const [customInputUrl, setCustomInputUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastResponse, setLastResponse] = useState<any>(null);
   const [copiedKey, setCopiedKey] = useState(false);
 
   const apiKey = 'mauritop2026indexnowkey884729';
-  const keyLocation = 'https://mauritop.com/mauritop2026indexnowkey.txt';
+  const keyLocation = `${baseUrl}/mauritop2026indexnowkey.txt`;
 
   const toggleSelectUrl = (url: string) => {
     if (selectedUrls.includes(url)) {
@@ -67,7 +74,7 @@ export function IndexNowManager() {
   };
 
   const handleSelectAll = () => {
-    setSelectedUrls(PRESET_URLS.map(p => p.url));
+    setSelectedUrls(PRESET_PATHS.map(p => `${baseUrl}${p.path}`));
   };
 
   const handleDeselectAll = () => {
@@ -270,7 +277,7 @@ export function IndexNowManager() {
               تحديد الروابط المراد إرسالها للفهرسة
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              تم تحديد ({selectedUrls.length}) رابط من أصل ({PRESET_URLS.length})
+              تم تحديد ({selectedUrls.length}) رابط من أصل ({PRESET_PATHS.length})
             </p>
           </div>
 
@@ -297,7 +304,7 @@ export function IndexNowManager() {
             value={customInputUrl}
             onChange={(e) => setCustomInputUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAddCustomUrl()}
-            placeholder="أضف رابط فرعي آخر (مثال: /services/netflix أو https://mauritop.com/services/pubg)"
+            placeholder="أضف رابط فرعي آخر (مثال: /services/netflix)"
             className="flex-1 bg-slate-950 border border-white/15 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
           />
           <button
@@ -310,12 +317,13 @@ export function IndexNowManager() {
 
         {/* List of Preset URLs Checkboxes */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
-          {PRESET_URLS.map((preset) => {
-            const isSelected = selectedUrls.includes(preset.url);
+          {PRESET_PATHS.map((preset) => {
+            const fullUrl = `${baseUrl}${preset.path}`;
+            const isSelected = selectedUrls.includes(fullUrl);
             return (
               <div
                 key={preset.id}
-                onClick={() => toggleSelectUrl(preset.url)}
+                onClick={() => toggleSelectUrl(fullUrl)}
                 className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                   isSelected
                     ? 'bg-cyan-950/40 border-cyan-500/50 text-white shadow-lg shadow-cyan-500/5'
@@ -326,7 +334,7 @@ export function IndexNowManager() {
                   <p className={`text-xs font-bold truncate ${isSelected ? 'text-cyan-300' : 'text-slate-300'}`}>
                     {preset.name}
                   </p>
-                  <p className="text-[11px] font-mono text-slate-500 truncate">{preset.url}</p>
+                  <p className="text-[11px] font-mono text-slate-500 truncate">{fullUrl}</p>
                 </div>
 
                 <div className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-all ${
@@ -340,12 +348,12 @@ export function IndexNowManager() {
         </div>
 
         {/* Custom Added URLs if any */}
-        {selectedUrls.filter(u => !PRESET_URLS.some(p => p.url === u)).length > 0 && (
+        {selectedUrls.filter(u => !PRESET_PATHS.some(p => `${baseUrl}${p.path}` === u)).length > 0 && (
           <div className="pt-4 border-t border-white/10">
             <p className="text-xs font-bold text-amber-300 mb-2">الروابط المضافة مخصصاً:</p>
             <div className="space-y-2">
               {selectedUrls
-                .filter(u => !PRESET_URLS.some(p => p.url === u))
+                .filter(u => !PRESET_PATHS.some(p => `${baseUrl}${p.path}` === u))
                 .map((u, idx) => (
                   <div key={idx} className="flex items-center justify-between bg-amber-950/20 border border-amber-500/30 rounded-xl p-2.5 px-4 text-xs">
                     <span className="font-mono text-amber-200 truncate">{u}</span>

@@ -939,17 +939,17 @@ export default function AdminDashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
+    <div className="min-h-screen bg-[#070B14] text-slate-100 flex flex-col md:flex-row relative overflow-hidden" dir="rtl">
       <SEO title="لوحة الإدارة | موري توب" noindex={true} />
       {/* Mobile Top Bar */}
-      <div className="md:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-        <button onClick={() => setIsMobileSidebarOpen(true)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600" aria-label="القائمة">
+      <div className="md:hidden bg-[#0B1120] border-b border-white/10 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+        <button onClick={() => setIsMobileSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-lg text-slate-300" aria-label="القائمة">
           <Menu size={24} />
         </button>
-        <span className="font-black text-slate-800 text-base">لوحة التحكم</span>
+        <span className="font-black text-white text-base">لوحة التحكم</span>
         <button 
           onClick={() => navigate("/")} 
-          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 rounded-lg transition-colors"
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 rounded-lg transition-colors"
           title="الرجوع إلى المتجر"
         >
           <span>المتجر</span>
@@ -960,15 +960,15 @@ export default function AdminDashboard() {
       {/* Sidebar - Desktop */}
       <aside 
         className={cn(
-          "bg-white border-l border-slate-200 transition-all duration-300 hidden md:flex flex-col z-30 h-screen sticky top-0",
+          "bg-[#0B1120] border-l border-white/10 transition-all duration-300 hidden md:flex flex-col z-30 h-screen sticky top-0",
           isSidebarOpen ? "w-72" : "w-20"
         )}
       >
-        <div className="p-6 flex items-center justify-between">
-          {isSidebarOpen && <span className="font-black text-slate-800 text-xl tracking-tight">موري توب</span>}
+        <div className="p-6 flex items-center justify-between border-b border-white/5">
+          {isSidebarOpen && <span className="font-black text-white text-xl tracking-tight">موري توب</span>}
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 hover:bg-slate-50 rounded-lg text-slate-400 transition-colors"
+            className="p-2 hover:bg-white/5 rounded-lg text-slate-400 transition-colors"
           >
             {isSidebarOpen ? <ChevronLeft size={20} /> : <Menu size={20} />}
           </button>
