@@ -376,7 +376,17 @@ async function startServer() {
         }
       }
 
-      const orderRef = firestore.collection("orders").doc(orderId || undefined);
+      // Prevent order overwrite if orderId already exists for another user
+      const targetOrderId = typeof orderId === "string" && orderId.trim() ? orderId.trim() : firestore.collection("orders").doc().id;
+      const orderRef = firestore.collection("orders").doc(targetOrderId);
+      const existingOrderSnap = await orderRef.get();
+      if (existingOrderSnap.exists) {
+        const existingData = existingOrderSnap.data();
+        if (existingData?.userId !== user.uid) {
+          return res.status(403).json({ error: 'معرف الطلب محجوز ولا يمكن استخدامه.' });
+        }
+      }
+
       const now = admin.firestore.Timestamp.now();
       await orderRef.set({
         id: orderRef.id,
