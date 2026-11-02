@@ -88,10 +88,17 @@ export default function Layout({ children }: { children: ReactNode }) {
                 description: s.description || "",
                 descriptionAr: s.descriptionAr || "",
                 image: s.image || "",
-                priceMru: s.suggestedPrice || s.minAmount || 0,
+                priceMru: s.priceMru !== undefined ? s.priceMru : (s.suggestedPrice || s.minAmount || 0),
+                pricingMode: s.pricingMode || (s.packages && s.packages.length > 0 ? "packages" : "fixed"),
+                minAmountMru: s.minAmountMru || s.minAmount || 0,
+                maxAmountMru: s.maxAmountMru || s.maxAmount || 0,
                 badge: s.category === "ألعاب" ? "شحن ألعاب" : s.category === "اشتراكات" ? "اشتراكات" : "خدمات رقمية",
                 imageFit: s.imageFit || "cover",
                 status: "نشط",
+                requiredFields: s.requiredFields || [],
+                optionalFields: s.optionalFields || [],
+                packages: s.packages || [],
+                unit: s.unit || "",
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp()
               }, { merge: true });

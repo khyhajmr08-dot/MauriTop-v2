@@ -10,6 +10,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import crypto from "crypto";
+import { isValidMauritanianPhone, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation";
 
 import firebaseConfig from "./firebase-applet-config.json";
 
@@ -339,7 +340,7 @@ async function startServer() {
       } = req.body || {};
 
       const cleanPhone = String(senderPhone || '').replace(/\D/g, '');
-      if (cleanPhone.length !== 8 || !/^[234]/.test(cleanPhone)) {
+      if (!isValidMauritanianPhone(cleanPhone)) {
         return res.status(400).json({ error: 'رقم هاتف غير صالح.' });
       }
 
@@ -376,33 +377,107 @@ async function startServer() {
         }
       }
 
-      const orderRef = firestore.collection("orders").doc(orderId || undefined);
-      const now = admin.firestore.Timestamp.now();
-      await orderRef.set({
-        id: orderRef.id,
+      // Compute order payload hash for idempotency checking
+      const payloadHash = computeOrderPayloadHash({
         userId: user.uid,
-        userName: user.name || user.email?.split('@')[0] || 'User',
-        userEmail: user.email || '',
         serviceId,
-        serviceType: serviceType || sData.name || serviceId,
-        serviceTitleAr: sData.titleAr || sData.nameAr || serviceId,
-        amount: verifiedAmount,
-        fee: 0,
-        total: verifiedAmount,
-        paymentMethod: paymentMethod || 'bankily',
+        serviceType,
+        paymentMethod,
         senderPhone: cleanPhone,
-        senderRef: senderRef || '',
-        proofImageUrl: proofImageUrl || '',
-        proofUrl: proofImageUrl || '',
-        accountDetails: accountDetails || '',
-        fields: fields || {},
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now
+        senderRef,
+        proofImageUrl,
+        accountDetails,
+        fields,
+        amount: verifiedAmount
       });
 
-      return res.status(201).json({ success: true, orderId: orderRef.id });
+      const { idempotencyKey } = req.body || {};
+      const targetOrderId = typeof orderId === "string" && orderId.trim() ? orderId.trim() : firestore.collection("orders").doc().id;
+      const orderRef = firestore.collection("orders").doc(targetOrderId);
+      const idempotencyRef = (typeof idempotencyKey === 'string' && idempotencyKey.trim())
+        ? firestore.collection("idempotency_keys").doc(`${user.uid}_${idempotencyKey.trim()}`)
+        : null;
+
+      const now = admin.firestore.Timestamp.now();
+      let isRetry = false;
+      let finalOrderId = targetOrderId;
+
+      await firestore.runTransaction(async (transaction) => {
+        // 1. Check idempotency key document if provided
+        if (idempotencyRef) {
+          const idemSnap = await transaction.get(idempotencyRef);
+          if (idemSnap.exists) {
+            const idemData = idemSnap.data() || {};
+            // Matching payload: return the existing order safely
+            if (idemData.payloadHash === payloadHash && idemData.userId === user.uid) {
+              isRetry = true;
+              finalOrderId = idemData.orderId;
+              return;
+            }
+            // Conflicting reuse with different payload: reject
+            throw new Error('IDEMPOTENCY_CONFLICT');
+          }
+        }
+
+        // 2. Check target order document
+        const existingDoc = await transaction.get(orderRef);
+        if (existingDoc.exists) {
+          const existingData = existingDoc.data() || {};
+          // If the same user retries with the same payload for the same order ID: return existing order
+          if (existingData.userId === user.uid && existingData.payloadHash === payloadHash) {
+            isRetry = true;
+            finalOrderId = orderRef.id;
+            return;
+          }
+          // Any other reuse of an existing order ID must be rejected
+          throw new Error('ORDER_EXISTS');
+        }
+
+        // 3. Atomically persist order and idempotency record
+        transaction.set(orderRef, {
+          id: orderRef.id,
+          userId: user.uid,
+          userName: user.name || user.email?.split('@')[0] || 'User',
+          userEmail: user.email || '',
+          serviceId,
+          serviceType: serviceType || sData.name || serviceId,
+          serviceTitleAr: sData.titleAr || sData.nameAr || serviceId,
+          amount: verifiedAmount,
+          fee: 0,
+          total: verifiedAmount,
+          paymentMethod: paymentMethod || 'bankily',
+          senderPhone: cleanPhone,
+          senderRef: senderRef || '',
+          proofImageUrl: proofImageUrl || '',
+          proofUrl: proofImageUrl || '',
+          accountDetails: accountDetails || '',
+          fields: fields || {},
+          status: 'pending',
+          payloadHash,
+          idempotencyKey: idempotencyKey || null,
+          createdAt: now,
+          updatedAt: now
+        });
+
+        if (idempotencyRef) {
+          transaction.set(idempotencyRef, {
+            userId: user.uid,
+            orderId: orderRef.id,
+            payloadHash,
+            createdAt: now
+          });
+        }
+      });
+
+      return res.status(isRetry ? 200 : 201).json({
+        success: true,
+        orderId: finalOrderId,
+        isRetry
+      });
     } catch (err: any) {
+      if (err?.message === 'ORDER_EXISTS' || err?.message === 'IDEMPOTENCY_CONFLICT') {
+        return res.status(409).json({ error: 'معرف الطلب أو مفتاح التكرار محجوز ولا يمكن استبداله ببيانات مختلفة.' });
+      }
       console.error("Auth order error:", err);
       return res.status(500).json({ error: 'خطأ أثناء إنشاء الطلب.' });
     }
@@ -536,14 +611,18 @@ async function startServer() {
     }
   });
 
+  // Canonical Site URL Resolution using production logic
+  const getCanonicalBaseUrl = (req?: express.Request): string => {
+    const forwardedHost = req ? (req.get('x-forwarded-host') || req.get('host') || '').toLowerCase() : undefined;
+    return resolveCanonicalUrl(process.env.CANONICAL_SITE_URL, forwardedHost);
+  };
+
   // Dynamic Sitemap Generator for Search Engines
-  const generateSitemapXml = async (hostUrl: string = "https://mauritop.com") => {
+  const generateSitemapXml = async (canonicalBase: string) => {
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n';
 
-    const lastMod = new Date().toISOString().split('T')[0];
-
-    // Static primary pages
+    // Static primary public pages
     const staticPages = [
       { path: '', priority: '1.0', changefreq: 'daily' },
       { path: '/service-cards', priority: '0.9', changefreq: 'weekly' },
@@ -555,35 +634,29 @@ async function startServer() {
     ];
 
     staticPages.forEach(p => {
-      xml += `  <url>\n    <loc>${hostUrl}${p.path}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>${p.changefreq}</changefreq>\n    <priority>${p.priority}</priority>\n  </url>\n`;
+      xml += `  <url>\n    <loc>${canonicalBase}${p.path}</loc>\n    <changefreq>${p.changefreq}</changefreq>\n    <priority>${p.priority}</priority>\n  </url>\n`;
     });
-
-    // Default core service IDs for fallback
-    const defaultServiceIds = [
-      'freefire', 'pubg', 'mobilelegends', 'fifa', 'netflix', 'canva', 'spotify', 'steam', 
-      'playstation', 'xbox', 'googleplay', 'apple', 'roblox', 'tiktok', 'bingo', 'binance', 'usdt', 'bip', 'telegram',
-      'shahid', 'tod', 'crunchyroll', 'disney', 'amazon', 'beinsports', 'osn', 'jawwy'
-    ];
-
-    const serviceIdsSet = new Set<string>(defaultServiceIds);
 
     try {
       const firestore = getDb();
       const servicesSnapshot = await firestore.collection("services").get();
       servicesSnapshot.forEach(doc => {
         const data = doc.data();
-        // Only index active services
-        if (doc.id && data.status !== 'Deleted' && data.status !== 'deleted' && data.status !== 'Draft') {
-          serviceIdsSet.add(doc.id);
+        // Only index non-deleted, active public services
+        if (doc.id && data.status !== 'Deleted' && data.status !== 'deleted' && data.status !== 'Draft' && data.status !== 'متوقف') {
+          let lastmodTag = '';
+          const updated = data.updatedAt || data.createdAt;
+          if (updated && typeof updated.toDate === 'function') {
+            lastmodTag = `\n    <lastmod>${updated.toDate().toISOString().split('T')[0]}</lastmod>`;
+          } else if (typeof updated === 'string' && /^\d{4}-\d{2}-\d{2}/.test(updated)) {
+            lastmodTag = `\n    <lastmod>${updated.slice(0, 10)}</lastmod>`;
+          }
+          xml += `  <url>\n    <loc>${canonicalBase}/services/${encodeURIComponent(doc.id)}</loc>${lastmodTag}\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n`;
         }
       });
     } catch (e) {
-      console.warn("Firestore services fetch for sitemap failed, using catalog:", e);
+      console.warn("Firestore services fetch for sitemap failed:", e);
     }
-
-    serviceIdsSet.forEach(sId => {
-      xml += `  <url>\n    <loc>${hostUrl}/services/${sId}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.9</priority>\n  </url>\n`;
-    });
 
     xml += '</urlset>';
     return xml;
@@ -591,7 +664,8 @@ async function startServer() {
 
   const handleSitemapRequest = async (req: express.Request, res: express.Response) => {
     try {
-      const xml = await generateSitemapXml("https://mauritop.com");
+      const canonicalBase = getCanonicalBaseUrl(req);
+      const xml = await generateSitemapXml(canonicalBase);
       res.header('Content-Type', 'application/xml; charset=utf-8');
       res.status(200).send(xml);
     } catch (e) {
@@ -613,9 +687,9 @@ async function startServer() {
   app.post("/api/indexnow/submit", requireOwner, rateLimit(10, 60_000), async (req, res) => {
     try {
       const { urls, host } = req.body || {};
-      // Accept either canonical production domain or provided vercel host
-      const allowedHosts = ["mauritop.com", "mauritop-v2-4ozx.vercel.app"];
-      const targetHost = (host && allowedHosts.includes(String(host).toLowerCase())) ? String(host).toLowerCase() : "mauritop.com";
+      const canonicalBase = getCanonicalBaseUrl(req);
+      const parsedCanonical = new URL(canonicalBase);
+      const targetHost = parsedCanonical.hostname.toLowerCase();
       const apiKey = "mauritop2026indexnowkey884729";
       const keyLocation = `https://${targetHost}/mauritop2026indexnowkey.txt`;
 
@@ -625,18 +699,7 @@ async function startServer() {
           return res.status(400).json({ success: false, error: "Invalid URL list." });
         }
         try {
-          urlList = urls.map((raw: string) => {
-            const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${targetHost}${raw.startsWith("/") ? "" : "/"}${raw}`;
-            const parsed = new URL(candidate);
-            if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== targetHost || parsed.username || parsed.password) {
-              throw new Error('Only canonical HTTPS URLs are allowed.');
-            }
-            if (/^\/(admin|orders|profile|checkout|notifications|login|register|history|transactions)(\/|$)/i.test(parsed.pathname)) {
-              throw new Error('Private or transactional routes cannot be submitted.');
-            }
-            parsed.hash = '';
-            return parsed.toString();
-          });
+          urlList = urls.map((raw: string) => validateIndexNowUrl(raw, targetHost));
         } catch (validationError: any) {
           return res.status(400).json({ success: false, error: validationError.message || "Invalid URL." });
         }
