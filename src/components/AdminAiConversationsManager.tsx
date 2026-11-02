@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { auth } from "../lib/firebase";
 import {
   Bot,
   Search,
@@ -49,43 +48,38 @@ export const AdminAiConversationsManager: React.FC = () => {
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  useEffect(() => {
+  const fetchConversations = async () => {
+    setLoading(true);
     try {
-      const q = query(
-        collection(db, "ai_conversations"),
-        orderBy("updatedAt", "desc")
-      );
-
-      const unsubscribe = onSnapshot(
-        q,
-        (snap) => {
-          const list: ConversationItem[] = snap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as any),
-            messages: Array.isArray(d.data().messages) ? d.data().messages : []
-          }));
-          setConversations(list);
-          setLoading(false);
-
-          if (selectedConversation) {
-            const updated = list.find(c => c.id === selectedConversation.id);
-            if (updated) {
-              setSelectedConversation(updated);
-            }
-          }
-        },
-        (err) => {
-          console.warn("Error listening to AI conversations:", err);
-          setLoading(false);
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
+      const token = await currentUser.getIdToken();
+      const statusParam = statusFilter !== "all" ? `?status=${statusFilter}` : "";
+      const res = await fetch(`/api/admin/ai-conversations${statusParam}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const list: ConversationItem[] = Array.isArray(data.conversations) ? data.conversations : [];
+        setConversations(list);
+        if (selectedConversation) {
+          const updated = list.find(c => c.id === selectedConversation.id);
+          if (updated) setSelectedConversation(updated);
         }
-      );
-
-      return () => unsubscribe();
+      }
     } catch (e) {
-      console.warn("Failed to subscribe to ai_conversations:", e);
+      console.warn("Failed to load AI conversations:", e);
+    } finally {
       setLoading(false);
     }
-  }, []);
+  };
+
+  useEffect(() => {
+    fetchConversations();
+  }, [statusFilter]);
 
   const handleSelect = (conv: ConversationItem) => {
     setSelectedConversation(conv);
@@ -95,13 +89,21 @@ export const AdminAiConversationsManager: React.FC = () => {
 
   const handleUpdateStatus = async (convId: string, newStatus: "open" | "resolved" | "escalated") => {
     try {
-      await updateDoc(doc(db, "ai_conversations", convId), {
-        status: newStatus,
-        updatedAt: new Date().toISOString()
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      const token = await currentUser.getIdToken();
+      await fetch(`/api/admin/ai-conversations/${convId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
       });
       if (selectedConversation && selectedConversation.id === convId) {
         setSelectedConversation(prev => prev ? { ...prev, status: newStatus } : null);
       }
+      setConversations(prev => prev.map(c => c.id === convId ? { ...c, status: newStatus } : c));
     } catch (err) {
       console.error("Failed to update conversation status:", err);
     }
@@ -111,11 +113,19 @@ export const AdminAiConversationsManager: React.FC = () => {
     if (!selectedConversation) return;
     setIsSavingNotes(true);
     try {
-      await updateDoc(doc(db, "ai_conversations", selectedConversation.id), {
-        internalNotes: notesDraft.trim(),
-        updatedAt: new Date().toISOString()
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      const token = await currentUser.getIdToken();
+      await fetch(`/api/admin/ai-conversations/${selectedConversation.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ internalNotes: notesDraft.trim() })
       });
       setSelectedConversation(prev => prev ? { ...prev, internalNotes: notesDraft.trim() } : null);
+      setConversations(prev => prev.map(c => c.id === selectedConversation.id ? { ...c, internalNotes: notesDraft.trim() } : c));
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err) {

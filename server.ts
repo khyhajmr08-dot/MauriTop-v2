@@ -150,8 +150,11 @@ async function startServer() {
     return res.json({ status: "ok", nodeEnv: process.env.NODE_ENV, disableHmr: process.env.DISABLE_HMR });
   });
 
-  // Verify receipt object in Firebase Storage using Admin SDK
-  const verifyStorageReceipt = async (proofUrl: string): Promise<{ valid: boolean; error?: string }> => {
+  // Verify receipt object in Firebase Storage using Admin SDK with ownership verification
+  const verifyStorageReceipt = async (
+    proofUrl: string,
+    expectedUserId: string
+  ): Promise<{ valid: boolean; error?: string }> => {
     if (!proofUrl || typeof proofUrl !== 'string') {
       return { valid: false, error: 'Proof URL is missing' };
     }
@@ -164,6 +167,13 @@ async function startServer() {
         return { valid: false, error: 'Invalid storage URL format' };
       }
       const storagePath = match[1];
+
+      // Ownership check: path must match the expected user namespace
+      const expectedPrefix = `order-receipts/${expectedUserId}/`;
+      if (!storagePath.startsWith(expectedPrefix)) {
+        return { valid: false, error: 'Receipt does not belong to the authorized checkout attempt' };
+      }
+
       const bucket = getStorage(adminApp).bucket();
       const file = bucket.file(storagePath);
       const [exists] = await file.exists();
@@ -218,12 +228,13 @@ async function startServer() {
       }
       const sData = serviceDoc.data() || {};
 
-      // Calculate authoritative amount
-      let verifiedAmount = Number(amount || 0);
+      // Calculate authoritative amount (support quote mode with 0 amount)
+      const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
+      let verifiedAmount = isQuoteMode ? 0 : Number(amount || 0);
       if (sData.pricingMode === "fixed") {
         verifiedAmount = Number(sData.priceMru || sData.price || 0);
       }
-      if (isNaN(verifiedAmount) || verifiedAmount <= 0) {
+      if (!isQuoteMode && (isNaN(verifiedAmount) || verifiedAmount <= 0)) {
         return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
       }
 
@@ -239,11 +250,11 @@ async function startServer() {
       }
 
       // 2. Receipt verification for manual payment
-      if (['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
+      if (!isQuoteMode && ['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
         if (!proofImageUrl || typeof proofImageUrl !== 'string') {
           return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
         }
-        const receiptCheck = await verifyStorageReceipt(proofImageUrl);
+        const receiptCheck = await verifyStorageReceipt(proofImageUrl, "guest");
         if (!receiptCheck.valid) {
           return res.status(400).json({ error: receiptCheck.error || 'إيصال الدفع غير صالح.' });
         }
@@ -354,11 +365,12 @@ async function startServer() {
         }
       }
 
-      if (['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
+      const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
+      if (!isQuoteMode && ['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
         if (!proofImageUrl || typeof proofImageUrl !== 'string') {
           return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
         }
-        const receiptCheck = await verifyStorageReceipt(proofImageUrl);
+        const receiptCheck = await verifyStorageReceipt(proofImageUrl, user.uid);
         if (!receiptCheck.valid) {
           return res.status(400).json({ error: receiptCheck.error || 'إيصال الدفع غير صالح.' });
         }
@@ -601,10 +613,9 @@ async function startServer() {
   app.post("/api/indexnow/submit", requireOwner, rateLimit(10, 60_000), async (req, res) => {
     try {
       const { urls, host } = req.body || {};
-      const targetHost = "mauritop.com";
-      if (host && String(host).toLowerCase() !== targetHost) {
-        return res.status(400).json({ success: false, error: "Only the configured canonical host is allowed." });
-      }
+      // Accept either canonical production domain or provided vercel host
+      const allowedHosts = ["mauritop.com", "mauritop-v2-4ozx.vercel.app"];
+      const targetHost = (host && allowedHosts.includes(String(host).toLowerCase())) ? String(host).toLowerCase() : "mauritop.com";
       const apiKey = "mauritop2026indexnowkey884729";
       const keyLocation = `https://${targetHost}/mauritop2026indexnowkey.txt`;
 

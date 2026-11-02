@@ -116,7 +116,7 @@ export const Navbar: React.FC = () => {
           >
             {isArabic ? "حاسبة الأسعار" : "Calculateur"}
           </Link>
-          {user && (
+          {user ? (
             <Link
               to="/orders"
               className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -126,6 +126,17 @@ export const Navbar: React.FC = () => {
               }`}
             >
               {isArabic ? "طلباتي" : "Commandes"}
+            </Link>
+          ) : (
+            <Link
+              to="/track-order"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                location.pathname === "/track-order"
+                  ? "text-emerald-400 bg-white/[0.05]"
+                  : "text-slate-300 hover:text-white hover:bg-white/[0.03]"
+              }`}
+            >
+              {isArabic ? "تتبع طلبي" : "Suivre ma commande"}
             </Link>
           )}
           <Link
@@ -266,6 +277,15 @@ export const Navbar: React.FC = () => {
           >
             {isArabic ? "تواصل والدعم الفني" : "Contact & Support"}
           </Link>
+          {!user && (
+            <Link
+              to="/track-order"
+              onClick={closeMenu}
+              className="block py-2 px-3 rounded-lg text-xs font-bold text-slate-200 hover:bg-white/[0.05]"
+            >
+              {isArabic ? "تتبع طلب زائر" : "Suivre ma commande"}
+            </Link>
+          )}
           <Link
             to="/notifications"
             onClick={closeMenu}

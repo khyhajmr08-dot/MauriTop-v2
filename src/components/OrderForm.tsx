@@ -14,7 +14,7 @@ import { getFallbackServiceImage, resolveServiceImage } from "../lib/serviceImag
 import { useToast } from "../contexts/ToastContext";
 import confetti from "canvas-confetti";
 import { motion, AnimatePresence } from "motion/react";
-import { UserCheck, Upload, HelpCircle, AlertCircle, CheckCircle2, ShoppingBag, Copy, FileText, RefreshCw, X, ShieldCheck, Loader2, Eye, ZoomIn, ClipboardList, ArrowRight, PhoneCall, Receipt, Smartphone } from "lucide-react";
+import { UserCheck, Upload, HelpCircle, AlertCircle, CheckCircle2, ShoppingBag, Copy, FileText, RefreshCw, X, ShieldCheck, Loader2, Eye, ZoomIn, ClipboardList, ArrowRight, PhoneCall, Receipt, Smartphone, Search } from "lucide-react";
 
 // استيراد شعارات طرق الدفع البنكية والمحفظات الإلكترونية المعتمدة
 import gazaLogoImg from "../assets/images/gaza_real_logo_1779370210822.png";
@@ -536,8 +536,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           throw new Error(language === 'ar' ? "نوع صورة الإيصال غير مدعوم" : "Type de fichier justificatif non pris en charge");
         }
 
-        setUploadProgress(10);
-        setProcessingStatus(language === 'ar' ? "جاري رفع صورة الإيصال..." : "Téléchargement du justificatif...");
+        setUploadProgress(0);
+        setProcessingStatus(language === 'ar' ? "جاري تهيئة رفع صورة الإيصال..." : "Initialisation du transfert...");
 
         const receiptUserId = user ? user.uid : "guest";
         uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}_${Date.now()}.jpg`;
@@ -550,28 +550,40 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
         });
 
         await new Promise<void>((resolve, reject) => {
+          // Timeout safeguards upload from hanging indefinitely
+          const timeout = setTimeout(() => {
+            try { uploadTask.cancel(); } catch {}
+            reject(new Error(language === 'ar' ? "استغرق رفع الإيصال وقتاً طويلاً، يرجى المحاولة ثانية" : "Délai d'attente de téléchargement dépassé"));
+          }, 60000);
+
           uploadTask.on(
             "state_changed",
             (snapshot) => {
-              const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-              setUploadProgress(Math.max(10, Math.min(progress, 95)));
-              setProcessingStatus(
-                language === 'ar'
-                  ? `جاري رفع صورة الإيصال (${progress}%)...`
-                  : `Téléchargement (${progress}%)...`
-              );
+              if (snapshot.totalBytes > 0) {
+                const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                setUploadProgress(Math.min(progress, 100));
+                setProcessingStatus(
+                  language === 'ar'
+                    ? `جاري نقل بيانات الإيصال (${progress}%)...`
+                    : `Transfert (${progress}%)...`
+                );
+              }
             },
             (err) => {
+              clearTimeout(timeout);
               console.error("Receipt upload error:", err);
-              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى المحاولة ثانية" : "Erreur de téléchargement"));
+              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى التحقق من اتصالك والمحاولة مجدداً" : "Erreur de téléchargement"));
             },
-            () => resolve()
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            }
           );
         });
 
         uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
         setUploadProgress(100);
-        setProcessingStatus(language === 'ar' ? "جاري حفظ وتأكيد الطلب..." : "Confirmation...");
+        setProcessingStatus(language === 'ar' ? "تم رفع الإيصال بنجاح! جاري تأكيد الطلب..." : "Reçu envoyé ! Confirmation en cours...");
       } else {
         setProcessingStatus(language === 'ar' ? "جاري إرسال الطلب..." : "Envoi...");
       }
@@ -603,73 +615,31 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
 
         setGuestTrackingToken(guestResult.trackingToken);
       } else {
-        // Authenticated customer submission: route through the backend if token available or setDoc
-        try {
-          const idToken = await user.getIdToken();
-          const authOrderResponse = await fetch("/api/orders/create", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${idToken}`
-            },
-            body: JSON.stringify({
-              orderId: orderRef.id,
-              serviceId: service.id,
-              serviceType: service.nameAr || service.name,
-              amount: isQuoteMode ? 0 : Number(amount),
-              paymentMethod: isQuoteMode ? "quote" : paymentMethod,
-              senderPhone: cleanSenderPhone,
-              senderRef: senderReference,
-              proofImageUrl: uploadedUrl,
-              accountDetails: detailsText,
-              fields: fieldValues
-            })
-          });
-
-          if (!authOrderResponse.ok) {
-            // Direct setDoc fallback respecting firestore.rules
-            await setDoc(orderRef, {
-              userId: user.uid,
-              userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
-              userEmail: user.email || "",
-              serviceId: service.id,
-              serviceType: service.nameAr || service.name,
-              amount: isQuoteMode ? 0 : Number(amount),
-              fee: 0,
-              total: isQuoteMode ? 0 : Number(amount),
-              accountDetails: detailsText,
-              fields: fieldValues,
-              status: 'pending',
-              proofImageUrl: uploadedUrl,
-              proofUrl: uploadedUrl,
-              paymentMethod: isQuoteMode ? "quote" : paymentMethod,
-              senderPhone: cleanSenderPhone,
-              senderRef: senderReference,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-          }
-        } catch {
-          await setDoc(orderRef, {
-            userId: user.uid,
-            userName: profile?.name || user.displayName || user.email?.split('@')[0] || 'مستخدم',
-            userEmail: user.email || "",
+        // Authenticated customer submission: strictly routed through backend endpoint with verification
+        const idToken = await user.getIdToken();
+        const authOrderResponse = await fetch("/api/orders/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+            orderId: orderRef.id,
             serviceId: service.id,
             serviceType: service.nameAr || service.name,
             amount: isQuoteMode ? 0 : Number(amount),
-            fee: 0,
-            total: isQuoteMode ? 0 : Number(amount),
-            accountDetails: detailsText,
-            fields: fieldValues,
-            status: 'pending',
-            proofImageUrl: uploadedUrl,
-            proofUrl: uploadedUrl,
             paymentMethod: isQuoteMode ? "quote" : paymentMethod,
             senderPhone: cleanSenderPhone,
             senderRef: senderReference,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          });
+            proofImageUrl: uploadedUrl,
+            accountDetails: detailsText,
+            fields: fieldValues
+          })
+        });
+
+        const authResult = await authOrderResponse.json().catch(() => ({}));
+        if (!authOrderResponse.ok) {
+          throw new Error(authResult.error || (language === 'ar' ? "فشل إنشاء الطلب الموثق عبر السيرفر" : "Échec de création de commande"));
         }
       }
 
@@ -2082,17 +2052,27 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic.medium();
-                    navigate('/orders');
-                  }}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-sm transition-all shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-                >
-                  <ClipboardList className="w-4 h-4" />
-                  <span>{language === 'ar' ? 'الانتقال إلى سجل الطلبات الآن 🚀' : 'Voir mes commandes maintenant 🚀'}</span>
-                </button>
+                {user ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic.medium();
+                      navigate('/orders');
+                    }}
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-sm transition-all shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <ClipboardList className="w-4 h-4" />
+                    <span>{language === 'ar' ? 'الانتقال إلى سجل طلباتي الآن 🚀' : 'Voir mes commandes maintenant 🚀'}</span>
+                  </button>
+                ) : (
+                  <Link
+                    to="/track-order"
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-sm transition-all shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <Search className="w-4 h-4" />
+                    <span>{language === 'ar' ? 'تتبع حالة هذا الطلب بالرمز السري 🔍' : 'Suivre ma commande en direct 🔍'}</span>
+                  </Link>
+                )}
               </div>
             </motion.div>
           </div>

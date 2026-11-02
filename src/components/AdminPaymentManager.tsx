@@ -22,7 +22,7 @@ import {
   subscribePaymentSettings, 
   savePaymentSettings 
 } from "../lib/paymentSettings";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
 
 import bankilyLogoImg from "../assets/images/bankily_real_logo_1779370169060.png";
@@ -114,8 +114,18 @@ export const AdminPaymentManager: React.FC = () => {
     setUploadingLogoKey(key);
     try {
       const storageRef = ref(storage, `payment-methods/${key}_${Date.now()}.png`);
-      const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
-      const downloadUrl = await getDownloadURL(snapshot.ref);
+      const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
+
+      await new Promise<void>((resolve, reject) => {
+        uploadTask.on(
+          "state_changed",
+          () => {},
+          (err) => reject(err),
+          () => resolve()
+        );
+      });
+
+      const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
 
       const updated = {
         ...settings,

@@ -110,19 +110,27 @@ export function IndexNowManager() {
         return;
       }
       const idToken = await currentUser.getIdToken();
+      // Detect current active host to support both mauritop.com and vercel previews
+      const currentHost = window.location.hostname.includes("vercel.app")
+        ? "mauritop-v2-4ozx.vercel.app"
+        : "mauritop.com";
+
       const res = await fetch('/api/indexnow/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ urls: selectedUrls, host: 'mauritop.com' }),
+        body: JSON.stringify({ urls: selectedUrls, host: currentHost }),
       });
 
       const data = await res.json();
       if (data.success) {
         setLastResponse(data);
         showToast(`تم إرسال ${data.submittedUrlsCount} رابط لمحركات البحث بنجاح!`, 'success');
+      } else if (data.results) {
+        setLastResponse(data);
+        showToast(data.error || 'تمت معالجة الطلب، يرجى مراجعة تفاصيل استجابة المحركات أدناه', 'info');
       } else {
         showToast(data.error || 'حدث خطأ أثناء إرسال الفهرسة', 'error');
       }

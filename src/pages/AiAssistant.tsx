@@ -130,14 +130,17 @@ export default function AiAssistant() {
   const [selectedCategory, setSelectedCategory] = useState<"all" | "games" | "subscriptions" | "utils">("all");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  const chatStorageKey = user ? `mouri_chats_${user.uid}` : "mouri_chats_guest";
+
   useEffect(() => {
-    let cid = localStorage.getItem("mauritop_ai_conversation_id");
+    const scopeKey = user ? `mauritop_conv_${user.uid}` : "mauritop_conv_guest";
+    let cid = localStorage.getItem(scopeKey);
     if (!cid) {
-      cid = "conv_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now();
-      localStorage.setItem("mauritop_ai_conversation_id", cid);
+      cid = (user ? `user_${user.uid.slice(0, 8)}_` : "guest_") + Math.random().toString(36).substring(2, 9) + "_" + Date.now();
+      localStorage.setItem(scopeKey, cid);
     }
     setConversationId(cid);
-  }, []);
+  }, [user]);
 
   const isArabic = language === "ar";
 
@@ -207,7 +210,7 @@ export default function AiAssistant() {
 
   // Retrieve existing conversation history from localStorage
   useEffect(() => {
-    const cachedChats = localStorage.getItem("mouri_chats_fullscreen_v1");
+    const cachedChats = localStorage.getItem(chatStorageKey);
     if (cachedChats) {
       try {
         const parsed = JSON.parse(cachedChats);
@@ -222,7 +225,7 @@ export default function AiAssistant() {
     } else {
       initDefaultGreeting();
     }
-  }, [language]);
+  }, [language, chatStorageKey]);
 
   const initDefaultGreeting = () => {
     setMessages([
@@ -237,7 +240,7 @@ export default function AiAssistant() {
   };
 
   const saveChats = (msgs: Message[]) => {
-    localStorage.setItem("mouri_chats_fullscreen_v1", JSON.stringify(msgs));
+    localStorage.setItem(chatStorageKey, JSON.stringify(msgs));
   };
 
   const scrollToBottom = () => {
@@ -348,16 +351,12 @@ export default function AiAssistant() {
   };
 
   const resetChat = () => {
-    localStorage.removeItem("mouri_chats_fullscreen_v1");
-    setMessages([
-      {
-        id: "init",
-        role: "model",
-        text: initGreeting,
-        timestamp: new Date(),
-        isGrounded: true
-      }
-    ]);
+    localStorage.removeItem(chatStorageKey);
+    const scopeKey = user ? `mauritop_conv_${user.uid}` : "mauritop_conv_guest";
+    const newCid = (user ? `user_${user.uid.slice(0, 8)}_` : "guest_") + Math.random().toString(36).substring(2, 9) + "_" + Date.now();
+    localStorage.setItem(scopeKey, newCid);
+    setConversationId(newCid);
+    initDefaultGreeting();
   };
 
   const isChatEmpty = messages.length <= 1;
