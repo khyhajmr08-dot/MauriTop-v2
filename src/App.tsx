@@ -39,6 +39,7 @@ const Contact = lazy(() => import("./pages/Contact"));
 const AiAssistant = lazy(() => import("./pages/AiAssistant"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("./pages/TermsOfService"));
+const TrackOrder = lazy(() => import("./pages/TrackOrder"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 function VisitorTracker() {
@@ -235,6 +236,7 @@ function AppContent({ user, isAdmin }: { user: any; isAdmin: boolean }) {
                   <Route path="/calculator" element={<Layout><QuantityCalculator /></Layout>} />
                   <Route path="/profile" element={<ProtectedRoute><Layout><Profile /></Layout></ProtectedRoute>} />
                   <Route path="/orders" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
+                  <Route path="/track-order" element={<Layout><TrackOrder /></Layout>} />
                   <Route path="/kyc" element={<ProtectedRoute><Layout><KycVerification /></Layout></ProtectedRoute>} />
                   <Route path="/notifications" element={<ProtectedRoute><Layout><Notifications /></Layout></ProtectedRoute>} />
                   <Route path="/contact" element={<Layout><Contact /></Layout>} />

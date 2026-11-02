@@ -272,18 +272,18 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
-    // AI Assistant conversations: Accessible by conversation owner (authenticated or session owner) and administrators
+    // AI Assistant conversations: List is strictly restricted to trusted owner.
+    // Individual conversations can only be read/updated by the participating authenticated user or trusted owner.
     match /ai_conversations/{conversationId} {
       allow get: if isOwner() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow list: if isOwner() || (isSignedIn() && request.query.limit <= 50);
+      allow list: if isOwner();
       allow create: if isOwner() || (
         request.resource.data.keys().hasAll(['messages', 'createdAt', 'updatedAt']) &&
         (!isSignedIn() || request.resource.data.userId == request.auth.uid)
       );
       allow update: if isOwner() || (
-        // Allow user/guest to append messages without altering admin fields
-        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['internalNotes', 'staffNotes', 'assignedTo'])) &&
-        (!isSignedIn() || resource.data.userId == request.auth.uid)
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['internalNotes', 'staffNotes', 'assignedTo', 'status'])) &&
+        (isSignedIn() && resource.data.userId == request.auth.uid)
       );
       allow delete: if isOwner();
     }

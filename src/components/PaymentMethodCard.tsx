@@ -64,11 +64,11 @@ export const PaymentMethodCard: React.FC<PaymentMethodCardProps> = ({
     : {
         name: isArabic ? (serviceTitle || "وسيلة دفع إلكترونية") : "Paiement en ligne",
         bank: isArabic ? "خدمة بنكية معتمدة" : "Service bancaire agréé",
-        logo: customLogoUrl || bankilyLogoImg,
+        logo: customLogoUrl || "",
       };
 
-  // Official verified default numbers
-  const defaultNum = isBankily ? "32014902" : "27329380";
+  // Official verified default numbers strictly scoped per known method
+  const defaultNum = isBankily ? "32014902" : isSadad ? "27329380" : "";
   const rawNum = (accountNumber || defaultNum).trim().replace(/\s+/g, "");
 
   // Guaranteed single line format with non-breaking space (\u00A0)
