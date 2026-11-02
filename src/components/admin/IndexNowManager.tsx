@@ -33,7 +33,6 @@ const PRESET_PATHS: ServicePreset[] = [
   { id: 'calculator', name: 'حاسبة الكميات والأسعار', path: '/calculator', category: 'primary' },
   { id: 'contact', name: 'تواصل معنا والدعم', path: '/contact', category: 'primary' },
   { id: 'assistant', name: 'المساعد الذكي', path: '/assistant', category: 'primary' },
-  { id: 'track-order', name: 'تتبع طلبات الزوار', path: '/track-order', category: 'primary' },
   { id: 'freefire', name: 'شحن فري فاير (Free Fire)', path: '/services/freefire', category: 'service' },
   { id: 'pubg', name: 'شحن شدات ببجي (PUBG Mobile)', path: '/services/pubg', category: 'service' },
   { id: 'netflix', name: 'اشتراكات نتفليكس (Netflix)', path: '/services/netflix', category: 'service' },

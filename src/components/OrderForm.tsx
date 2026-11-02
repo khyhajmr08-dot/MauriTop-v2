@@ -625,6 +625,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           },
           body: JSON.stringify({
             orderId: orderRef.id,
+            idempotencyKey: orderRef.id,
             serviceId: service.id,
             serviceType: service.nameAr || service.name,
             amount: isQuoteMode ? 0 : Number(amount),
