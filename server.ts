@@ -568,22 +568,18 @@ async function startServer() {
       xml += `  <url>\n    <loc>${hostUrl}${p.path}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>${p.changefreq}</changefreq>\n    <priority>${p.priority}</priority>\n  </url>\n`;
     });
 
-    // Default core service IDs for fallback
-    const defaultServiceIds = [
-      'freefire', 'pubg', 'mobilelegends', 'fifa', 'netflix', 'canva', 'spotify', 'steam', 
-      'playstation', 'xbox', 'googleplay', 'apple', 'roblox', 'tiktok', 'bingo', 'binance', 'usdt', 'bip', 'telegram',
-      'shahid', 'tod', 'crunchyroll', 'disney', 'amazon', 'beinsports', 'osn', 'jawwy'
-    ];
-
-    const serviceIdsSet = new Set<string>(defaultServiceIds);
+    // Real existing active service routes only
+    const serviceIdsSet = new Set<string>([
+      'freefire', 'pubg', 'netflix', 'canva', 'spotify', 'googleplay', 'apple', 'playstation', 'steam', 'roblox', 'tiktok'
+    ]);
 
     try {
       const firestore = getDb();
       const servicesSnapshot = await firestore.collection("services").get();
       servicesSnapshot.forEach(doc => {
         const data = doc.data();
-        // Only index active services
-        if (doc.id && data.status !== 'Deleted' && data.status !== 'deleted' && data.status !== 'Draft') {
+        // Only index non-deleted, active services
+        if (doc.id && data.status !== 'Deleted' && data.status !== 'deleted' && data.status !== 'Draft' && data.status !== 'متوقف') {
           serviceIdsSet.add(doc.id);
         }
       });
