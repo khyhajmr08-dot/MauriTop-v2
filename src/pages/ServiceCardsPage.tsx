@@ -311,8 +311,9 @@ export default function ServiceCardsPage() {
     return () => clearInterval(interval);
   }, [user]);
 
-  const displayedServices = realServices.length > 0 ? realServices : services;
-  const displayedActivities = realActivities.length > 0 ? realActivities : activities;
+  // In Phase 2: Eliminate fake demonstration cards and activities. Only show authentic user records.
+  const displayedServices = realServices;
+  const displayedActivities = realActivities;
 
   const filtered = useMemo(() => {
     return displayedServices.filter((s) => {
