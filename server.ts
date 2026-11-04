@@ -10,7 +10,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import crypto from "crypto";
-import { isValidMauritanianPhone, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation";
+import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation";
 
 import firebaseConfig from "./firebase-applet-config.json";
 
@@ -98,6 +98,79 @@ async function startServer() {
     }
   };
 
+  const ROLE_PERMISSIONS: Record<string, string[]> = {
+    owner: ['view_dashboard', 'manage_orders', 'manage_services', 'manage_content', 'manage_finance', 'view_analytics', 'manage_support', 'manage_users', 'manage_settings', 'export_data'],
+    support: ['view_dashboard', 'manage_support', 'manage_orders'],
+    orders: ['view_dashboard', 'manage_orders'],
+    finance: ['view_dashboard', 'manage_finance', 'export_data', 'view_analytics'],
+    catalog: ['view_dashboard', 'manage_services'],
+    content: ['view_dashboard', 'manage_content'],
+    analytics: ['view_dashboard', 'view_analytics', 'export_data'],
+    user: []
+  };
+
+  const requireStaffPermission = (permission: string): express.RequestHandler => async (req, res, next) => {
+    try {
+      if (!adminApp) {
+        res.status(503).json({ error: 'Authentication service is not configured.' });
+        return;
+      }
+      const authorization = req.get('authorization') || '';
+      const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+      if (!tokenMatch) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+      const decoded = await getAuth(adminApp).verifyIdToken(tokenMatch[1]);
+      (req as any).user = decoded;
+
+      // Owner has full access
+      if (decoded.uid === OWNER_UID || (decoded.email?.toLowerCase() === OWNER_EMAIL && decoded.email_verified === true)) {
+        (req as any).staffRole = 'owner';
+        return next();
+      }
+
+      // Resolve staff role from trusted Firestore user record
+      const firestore = getDb();
+      const userDoc = await firestore.collection("users").doc(decoded.uid).get();
+      if (!userDoc.exists) {
+        return res.status(403).json({ error: 'Staff access denied: user profile not found.' });
+      }
+      const userData = userDoc.data() || {};
+      if (userData.blocked === true) {
+        return res.status(403).json({ error: 'Account is blocked.' });
+      }
+
+      const role = String(userData.staffRole || userData.role || 'user').toLowerCase();
+      const allowedPerms = ROLE_PERMISSIONS[role] || [];
+      if (!allowedPerms.includes(permission)) {
+        return res.status(403).json({ error: `Staff permission '${permission}' required.` });
+      }
+
+      (req as any).staffRole = role;
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired authentication token.' });
+    }
+  };
+
+  const checkMaintenanceMode: express.RequestHandler = async (req, res, next) => {
+    try {
+      const firestore = getDb();
+      const globalDoc = await firestore.collection("settings").doc("global").get();
+      if (globalDoc.exists && globalDoc.data()?.maintenanceMode === true) {
+        return res.status(503).json({
+          code: 'MAINTENANCE_MODE',
+          error: 'المنصة في وضع الصيانة حالياً لاستقبال التحديثات. يرجى المحاولة لاحقاً.'
+        });
+      }
+      next();
+    } catch (err) {
+      console.error("Maintenance check error:", err);
+      next();
+    }
+  };
+
   const requireOwner: express.RequestHandler = async (req, res, next) => {
     try {
       if (!adminApp) {
@@ -146,9 +219,30 @@ async function startServer() {
     return ai;
   };
 
-  // Diagnostic routes
-  app.get("/api/health", (req, res) => {
-    return res.json({ status: "ok", nodeEnv: process.env.NODE_ENV, disableHmr: process.env.DISABLE_HMR });
+  // Diagnostic routes reporting backend readiness and critical dependency status
+  app.get("/api/health", async (req, res) => {
+    let firestoreStatus = "unknown";
+    try {
+      if (adminApp) {
+        const firestore = getDb();
+        await firestore.collection("settings").doc("global").get();
+        firestoreStatus = "ready";
+      } else {
+        firestoreStatus = "not_initialized";
+      }
+    } catch (e: any) {
+      firestoreStatus = "error";
+    }
+
+    return res.json({
+      status: "ok",
+      ready: firestoreStatus === "ready",
+      nodeEnv: process.env.NODE_ENV || 'production',
+      firestore: firestoreStatus,
+      auth: adminApp ? "ready" : "unconfigured",
+      storage: adminApp ? "ready" : "unconfigured",
+      timestamp: new Date().toISOString()
+    });
   });
 
   // Verify receipt object in Firebase Storage using Admin SDK with ownership verification
@@ -197,8 +291,69 @@ async function startServer() {
     }
   };
 
+  // Staff self-identity endpoint
+  app.get("/api/staff/me", requireStaffPermission('view_dashboard'), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const staffRole = (req as any).staffRole;
+      const isOwner = user.uid === OWNER_UID || (user.email?.toLowerCase() === OWNER_EMAIL && user.email_verified === true);
+      const permissions = isOwner ? ROLE_PERMISSIONS.owner : (ROLE_PERMISSIONS[staffRole] || []);
+      return res.json({
+        uid: user.uid,
+        email: user.email,
+        role: staffRole,
+        isOwner,
+        permissions
+      });
+    } catch (err: any) {
+      console.error("Staff me error:", err);
+      return res.status(500).json({ error: 'Failed to retrieve staff identity.' });
+    }
+  });
+
+  // Owner set-role endpoint
+  app.post("/api/admin/set-role", requireOwner, rateLimit(10, 60_000), async (req, res) => {
+    try {
+      const { targetUid, role } = req.body || {};
+      const validRoles = ['user', 'support', 'orders', 'finance', 'catalog', 'content', 'analytics'];
+      if (!targetUid || typeof targetUid !== 'string') {
+        return res.status(400).json({ error: 'معرف المستخدم المستهدف مطلوب.' });
+      }
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'الدور المحدد غير صالح.' });
+      }
+
+      const firestore = getDb();
+      const targetUserRef = firestore.collection("users").doc(targetUid);
+      const targetDoc = await targetUserRef.get();
+      if (!targetDoc.exists) {
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+      }
+
+      await targetUserRef.update({
+        staffRole: role,
+        role: role,
+        updatedAt: admin.firestore.Timestamp.now()
+      });
+
+      // Audit log entry
+      await firestore.collection("admin_logs").add({
+        action: 'SET_STAFF_ROLE',
+        targetUid,
+        assignedRole: role,
+        performedBy: (req as any).user?.uid || 'owner',
+        timestamp: admin.firestore.Timestamp.now()
+      });
+
+      return res.json({ success: true, message: `تم تعيين الدور بنجاح إلى ${role}` });
+    } catch (err: any) {
+      console.error("Admin set-role error:", err);
+      return res.status(500).json({ error: 'فشل تعيين الدور.' });
+    }
+  });
+
   // Secure Guest Checkout Endpoint
-  app.post("/api/guest/orders", rateLimit(10, 60_000), async (req, res) => {
+  app.post("/api/guest/orders", checkMaintenanceMode, rateLimit(10, 60_000), async (req, res) => {
     try {
       const {
         serviceId,
@@ -228,6 +383,9 @@ async function startServer() {
         return res.status(404).json({ error: 'الخدمة غير موجودة.' });
       }
       const sData = serviceDoc.data() || {};
+      if (!isServicePurchasable(sData)) {
+        return res.status(400).json({ error: 'هذه الخدمة غير متاحة للشراء حالياً أو تم إيقافها مؤقتاً.' });
+      }
 
       // Calculate authoritative amount (support quote mode with 0 amount)
       const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
@@ -323,7 +481,7 @@ async function startServer() {
   });
 
   // Authenticated Order Creation Endpoint
-  app.post("/api/orders/create", requireActiveUser, rateLimit(10, 60_000), async (req, res) => {
+  app.post("/api/orders/create", checkMaintenanceMode, requireActiveUser, rateLimit(10, 60_000), async (req, res) => {
     try {
       const user = (req as any).user;
       const {
@@ -350,6 +508,9 @@ async function startServer() {
         return res.status(404).json({ error: 'الخدمة غير موجودة.' });
       }
       const sData = serviceDoc.data() || {};
+      if (!isServicePurchasable(sData)) {
+        return res.status(400).json({ error: 'هذه الخدمة غير متاحة للشراء حالياً أو تم إيقافها مؤقتاً.' });
+      }
 
       let verifiedAmount = Number(amount || 0);
       if (sData.pricingMode === "fixed") {
@@ -524,6 +685,32 @@ async function startServer() {
     }
   });
 
+  // User referral stats endpoint returning only safe caller statistics
+  app.get("/api/user/referrals", requireActiveUser, rateLimit(20, 60_000), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const firestore = getDb();
+      const userDoc = await firestore.collection("users").doc(user.uid).get();
+      const userData = userDoc.data() || {};
+
+      // Query referrals count where referredBy matches caller UID
+      const refsSnapshot = await firestore.collection("users")
+        .where("referredBy", "==", user.uid)
+        .get();
+
+      return res.json({
+        referralCode: userData.referralCode || user.uid.slice(0, 8),
+        totalReferred: refsSnapshot.size,
+        loyaltyPoints: Number(userData.loyaltyPoints || 0),
+        rewardPerReferral: 30,
+        minimumWithdrawal: 500
+      });
+    } catch (err: any) {
+      console.error("Error in /api/user/referrals:", err);
+      return res.status(500).json({ error: 'تعذر جلب بيانات الإحالات.' });
+    }
+  });
+
   // Referral withdrawal endpoint ensuring 500 MRU minimum and atomic reservation
   app.post("/api/wallet/withdraw", requireActiveUser, rateLimit(5, 60_000), async (req, res) => {
     try {
@@ -580,6 +767,7 @@ async function startServer() {
         success: true,
         withdrawalId: withdrawalRef.id,
         newBalance: result.newBalance,
+        remainingBalance: result.newBalance,
         message: 'تم تقديم طلب السحب بنجاح وهو قيد المراجعة.'
       });
     } catch (err: any) {
@@ -789,7 +977,24 @@ async function startServer() {
   // Secure context-aware text chatbot route
   app.post("/api/chat", rateLimit(20, 60_000), async (req, res) => {
     try {
-      const { contents, conversationId, userId, userEmail, userName } = req.body || {};
+      // Optional Firebase ID token verification for authenticated callers
+      let callerUid: string | null = null;
+      let callerEmail: string | null = null;
+      let callerName: string | null = null;
+      const authorization = req.get('authorization') || '';
+      const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+      if (tokenMatch && adminApp) {
+        try {
+          const decoded = await getAuth(adminApp).verifyIdToken(tokenMatch[1]);
+          callerUid = decoded.uid;
+          callerEmail = decoded.email || null;
+          callerName = decoded.name || null;
+        } catch {
+          // Non-blocking for guests; callerUid remains null
+        }
+      }
+
+      const { contents, conversationId, userName } = req.body || {};
       if (!Array.isArray(contents) || contents.length === 0 || contents.length > 20) {
         return res.status(400).json({ error: "Invalid contents parameter. Expected 1–20 messages." });
       }
@@ -862,6 +1067,10 @@ async function startServer() {
 
           if (existing.exists) {
             const data = existing.data();
+            // Ownership protection: If conversation belongs to another registered user, do not overwrite or mix history
+            if (data?.userId && callerUid && data.userId !== callerUid) {
+              return res.status(403).json({ error: "Access denied to this conversation." });
+            }
             const currentMsgs = Array.isArray(data?.messages) ? data.messages : [];
             await convRef.update({
               messages: [...currentMsgs, ...newMessages].slice(-50),
@@ -873,9 +1082,9 @@ async function startServer() {
           } else {
             await convRef.set({
               conversationId,
-              userId: typeof userId === "string" ? userId : null,
-              userEmail: typeof userEmail === "string" ? userEmail : null,
-              userName: typeof userName === "string" ? userName : "زائر / عميل",
+              userId: callerUid,
+              userEmail: callerEmail,
+              userName: callerName || (typeof userName === "string" ? userName : "زائر / عميل"),
               messages: newMessages,
               status: "open", // open, resolved, escalated
               internalNotes: "",

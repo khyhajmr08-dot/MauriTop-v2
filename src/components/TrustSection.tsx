@@ -109,12 +109,12 @@ export default function TrustSection() {
             </div>
             <div>
               <h3 className="font-bold text-white text-sm mb-1">
-                {isAr ? "تنفيذ سريع ودعم 24/7" : "Exécution Rapide & Support 24/7"}
+                {isAr ? "تنفيذ سريع ومتابعة دقيقة" : "Exécution Rapide & Suivi"}
               </h3>
               <p className="text-xs text-slate-300 leading-relaxed font-normal">
                 {isAr 
-                  ? "معالجة ومتابعة فورية للطلبات مع فريق دعم فني متواجد لمساعدتك والإجابة على استفساراتك دائماً."
-                  : "Traitement ultra-rapide avec suivi en direct et équipe de support disponible pour vous accompagner."}
+                  ? "معالجة الطلبات ومتابعتها عبر فريق دعم فني مخصص للتحقق من الإيصالات وتنفيذ الخدمات."
+                  : "Traitement suivi des commandes avec une équipe dédiée pour vérifier les reçus et vous accompagner."}
               </p>
             </div>
           </div>
@@ -148,16 +148,16 @@ export default function TrustSection() {
       {/* 3 Metric Stats */}
       <div className="grid sm:grid-cols-3 gap-3">
         <StatBox 
-          label={isAr ? "الثقة والأمان" : "Confiance & Sécurité"} 
-          value={isAr ? "منصة موثوقة 100%" : "Plateforme 100% fiable"} 
+          label={isAr ? "الأمان والتحقق" : "Sécurité & Vérification"}
+          value={isAr ? "تحقق معتمد من الإيصالات" : "Reçus vérifiés"}
         />
         <StatBox 
-          label={isAr ? "سرعة التسليم" : "Rapidité"} 
-          value={isAr ? "تنفيذ وتسليم فوري" : "Livraison instantanée"} 
+          label={isAr ? "سرعة المعالجة" : "Traitement"}
+          value={isAr ? "معالجة مباشرة للطلبات" : "Traitement direct"}
         />
         <StatBox 
-          label={isAr ? "الدعم الفني" : "Support technique"} 
-          value={isAr ? "خدمة متواصلة 24/7" : "Support continu 24/7"} 
+          label={isAr ? "وسائل الدفع" : "Moyens de paiement"}
+          value={isAr ? "بنكيلي، سداد، غزة باي" : "Bankily, Sedad, GazaPay"}
         />
       </div>
     </section>

@@ -21,105 +21,9 @@ import { SubscriptionCardSkeleton } from "../components/Skeleton";
 
 type ServiceType = "all" | "netflix" | "pubg" | "freefire" | "apple" | "prime" | "other";
 
-const services: ServiceCardData[] = [
-  {
-    id: "netflix-1",
-    type: "netflix",
-    title: "نتفلكس بريميوم",
-    subtitle: "اشتراك شهري فاخر",
-    logo: "/assets/netflix.png",
-    status: "active",
-    pinCode: "RX2UXHXZ#",
-    amount: "500",
-    currency: "أوقية",
-    paymentMethod: "bankily",
-    transactionId: "31317724",
-    activatedAt: "2026-06-12",
-    expiresAt: "2026-07-12",
-    note: "اشتراك نشط وصالح لمدة شهر كامل.",
-    showCard: true,
-    showPin: true,
-    showDates: true,
-    showAmount: true,
-    showPayment: true,
-    showTransactionId: true,
-    showAction: true,
-  },
-  {
-    id: "pubg-1",
-    type: "pubg",
-    title: "شحن CP ببجي موبايل",
-    subtitle: "بطاقة رقمية صالحة",
-    logo: "/assets/pubg.png",
-    status: "active",
-    amount: "10",
-    currency: "دولار",
-    paymentMethod: "مباشر",
-    activatedAt: "2026-06-12",
-    expiresAt: "2026-06-22",
-    note: "بطاقة شحن جاهزة للاستخدام فوراً.",
-    showCard: true,
-    showPin: false,
-    showDates: false,
-    showAmount: true,
-    showPayment: true,
-    showTransactionId: false,
-    showAction: true,
-  },
-  {
-    id: "apple-1",
-    type: "apple",
-    title: "آبل ميوزك",
-    subtitle: "اشتراك مميز",
-    logo: "/assets/apple.png",
-    status: "pending",
-    amount: "250",
-    currency: "أوقية",
-    paymentMethod: "Bankily",
-    activatedAt: "2026-06-12",
-    expiresAt: "2026-07-12",
-    note: "بانتظار التفعيل النهائي.",
-    showCard: true,
-    showPin: true,
-    showDates: true,
-    showAmount: true,
-    showPayment: true,
-    showTransactionId: true,
-    showAction: true,
-    pinCode: "JWMQ62K#",
-    transactionId: "A27TT#",
-  },
-  {
-    id: "freefire-1",
-    type: "freefire",
-    title: "فري فاير",
-    showCard: false,
-  },
-];
-
-const activities = [
-  {
-    id: "1",
-    title: "بطاقة جديدة",
-    desc: "تمت إضافة بطاقة آبل ميوزك وتفعيلها.",
-    time: "قبل 5 دقائق",
-    status: "success" as const,
-  },
-  {
-    id: "2",
-    title: "عملية مدفوعة",
-    desc: "تمت معالجة دفع bankily بنجاح.",
-    time: "قبل 18 دقيقة",
-    status: "done" as const,
-  },
-  {
-    id: "3",
-    title: "بطاقة قيد المراجعة",
-    desc: "اشتراك نتفلكس بانتظار التحقق النهائي.",
-    time: "قبل ساعة",
-    status: "pending" as const,
-  },
-];
+// No hardcoded mock services or fake PINs:
+const services: ServiceCardData[] = [];
+const activities: any[] = [];
 
 function StatTile({
   label,
@@ -311,8 +215,8 @@ export default function ServiceCardsPage() {
     return () => clearInterval(interval);
   }, [user]);
 
-  const displayedServices = realServices.length > 0 ? realServices : services;
-  const displayedActivities = realActivities.length > 0 ? realActivities : activities;
+  const displayedServices = realServices;
+  const displayedActivities = realActivities;
 
   const filtered = useMemo(() => {
     return displayedServices.filter((s) => {

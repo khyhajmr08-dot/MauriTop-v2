@@ -14,7 +14,7 @@ const faqsAr: FAQItem[] = [
   },
   {
     q: "هل أحتاج إلى إنشاء حساب لاستخدام المنصة؟",
-    a: "نعم، يمكنك إنشاء حساب جديد سريع خلال ثوانٍ برقم الهاتف أو البريد الإلكتروني. يضمن لك الحساب حفظ جميع طلباتك، وتتبع حالة اشتراكاتك وأكوادك الخاصة بأمان من لوحة التحكم.",
+    a: "ليس بالضرورة؛ تتيح المنصة إمكانية إتمام الطلبات كـ 'زائر' مباشرة وتتبعها برمز أمان خاص، كما يمكنك إنشاء حساب لحفظ سجل طلباتك ونقاط المكافآت وسهولة المتابعة.",
   },
   {
     q: "كيف يمكنني تتبع حالة طلبي بعد إرساله؟",
@@ -33,7 +33,7 @@ const faqsFr: FAQItem[] = [
   },
   {
     q: "Ai-je besoin d'un compte pour commander ?",
-    a: "Oui, la création d'un compte prend quelques secondes avec votre numéro ou e-mail. Cela vous permet de retrouver l'historique de vos commandes, vos abonnements et vos codes de recharge en toute sécurité.",
+    a: "Pas nécessairement. Vous pouvez passer commande en tant qu'invité et suivre son statut grâce à votre code de suivi sécurisé, ou créer un compte pour conserver l'historique de vos commandes et cumuler des récompenses.",
   },
   {
     q: "Comment puis-je suivre l'état de ma commande ?",
