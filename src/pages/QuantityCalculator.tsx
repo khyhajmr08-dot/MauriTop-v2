@@ -311,12 +311,10 @@ export default function QuantityCalculator() {
                       <Globe className="w-3.5 h-3.5 text-emerald-400" strokeWidth={1.6} />
                       <span>{language === 'ar' ? 'تحويل العملات الصعبة' : 'Convertisseur de devises'}</span>
                     </h3>
-                    {lastUpdated && (
-                      <span className="text-[10px] text-slate-400 flex items-center gap-1 bg-[#070B14] px-2 py-0.5 rounded-full border border-white/5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                        <span>{language === 'ar' ? `تحديث: ${lastUpdated}` : `Màj: ${lastUpdated}`}</span>
-                      </span>
-                    )}
+                    <span className="text-[10px] text-slate-400 flex items-center gap-1 bg-[#070B14] px-2 py-0.5 rounded-full border border-white/5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      <span>{language === 'ar' ? 'سعر تقديري استرشادي' : 'Taux indicatif estimé'}</span>
+                    </span>
                   </div>
 
                   {/* Currencies Display List */}

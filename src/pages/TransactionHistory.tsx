@@ -210,7 +210,12 @@ const TransactionHistory: React.FC = () => {
 
   const handleDownloadPDF = () => {
     try {
-      const activeList = filteredOrders.length > 0 ? filteredOrders : orders;
+      // In Phase 2: If the current filter produces 0 matching orders, do not fall back to exporting every order.
+      const activeList = filteredOrders;
+      if (activeList.length === 0) {
+        showToast(isArabic ? "لا توجد طلبات تطابق الفلتر المحدد لتصديرها" : "Aucune commande correspondante à exporter", "info");
+        return;
+      }
       const totalSpent = activeList
         .filter((o) => o.status?.toLowerCase() === "completed" || o.status?.toLowerCase() === "approved")
         .reduce((sum, o) => sum + (o.total || o.amount || 0), 0);
