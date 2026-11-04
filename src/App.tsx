@@ -18,6 +18,7 @@ import SplashScreen from './components/SplashScreen';
 import Layout from './components/Layout';
 import FloatingAiButton from './components/FloatingAiButton';
 import RequireAdmin from './routes/RequireAdmin';
+import RequireStaff from './routes/RequireStaff';
 import { useVisitorTracking } from './hooks/useVisitorTracking';
 
 const Home = lazy(() => import("./pages/Home"));
@@ -25,6 +26,7 @@ const Login = lazy(() => import("./pages/Login"));
 const Register = lazy(() => import("./pages/Register"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const StaffDashboard = lazy(() => import("./pages/StaffDashboard"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
 const PostsAdmin = lazy(() => import("./components/PostsAdmin"));
 const ServicesManager = lazy(() => import("./pages/ServicesManager"));
@@ -225,6 +227,7 @@ function AppContent({ user, isAdmin }: { user: any; isAdmin: boolean }) {
                   <Route path="/register" element={user ? <Navigate to="/orders" replace /> : <Register />} />
                   <Route path="/dashboard" element={<Navigate to="/orders" replace />} />
                   <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
+                  <Route path="/staff" element={<RequireStaff><StaffDashboard /></RequireStaff>} />
                   <Route path="/admin/posts" element={<RequireAdmin><PostsAdmin /></RequireAdmin>} />
                   <Route path="/admin/services-manager" element={<RequireAdmin><ServicesManager /></RequireAdmin>} />
                   <Route path="/admin/login" element={user && isAdmin ? <Navigate to="/admin" /> : <AdminLogin />} />

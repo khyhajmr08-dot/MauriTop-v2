@@ -1,15 +1,26 @@
 @import "tailwindcss";
 
 :root {
-  --profile-bg: #0B111E;
-  --profile-surface: #0E1626;
-  --profile-surface-soft: #121D31;
+  --color-bg: #070B14;
+  --color-surface: #0B1120;
+  --color-surface-raised: #111B2E;
+  --color-border: #243247;
+  --color-primary: #10B981;
+  --color-secondary: #06B6D4;
+  --color-gold: #D6B35A;
+  --color-text-main: #F8FAFC;
+  --color-text-muted: #A8B3C5;
+  --color-error: #EF4444;
+
+  --profile-bg: #070B14;
+  --profile-surface: #0B1120;
+  --profile-surface-soft: #111B2E;
   --profile-surface-raised: #1A2844;
-  --profile-border: rgba(255, 255, 255, 0.1);
-  --profile-text: #F1F5F9;
-  --profile-text-muted: #94A3B8;
+  --profile-border: #243247;
+  --profile-text: #F8FAFC;
+  --profile-text-muted: #A8B3C5;
   --profile-primary: #10B981;
-  --profile-danger: #F43F5E;
+  --profile-danger: #EF4444;
   --profile-radius-sm: 8px;
   --profile-radius-md: 14px;
   --profile-radius-lg: 20px;
@@ -22,13 +33,13 @@
 
 @layer base {
   * {
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--color-border);
   }
   
   body {
-    background-color: #0B111E;
-    color: #F1F5F9;
-    font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+    background-color: var(--color-bg);
+    color: var(--color-text-main);
+    font-family: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
   }
 }
 

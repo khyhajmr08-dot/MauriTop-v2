@@ -14,9 +14,13 @@ Allow: /services/
 Allow: /privacy
 Allow: /terms
 
-# Disallow private user and admin workflows
+# Disallow private user, staff, and admin workflows
 Disallow: /admin
 Disallow: /admin/
+Disallow: /staff
+Disallow: /staff/
+Disallow: /checkout
+Disallow: /track-order
 Disallow: /login
 Disallow: /register
 Disallow: /history

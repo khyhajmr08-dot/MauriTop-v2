@@ -4,6 +4,7 @@ import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../lib/useAuth";
 import { useLanguage } from "../contexts/LanguageContext";
+import { isStaffMember } from "../lib/permissions";
 import { 
   Zap, 
   ShieldCheck, 
@@ -15,7 +16,8 @@ import {
   Menu, 
   X,
   ClipboardList,
-  Bell
+  Bell,
+  ShieldAlert
 } from "lucide-react";
 import { OFFICIAL_PHONE } from "../constants";
 
@@ -154,7 +156,7 @@ export const Navbar: React.FC = () => {
         {/* Right Action Icons & Controls */}
         <div className="flex items-center gap-1.5 xs:gap-2 shrink-0">
           {/* Admin Dashboard Badge (if admin) */}
-          {isAdmin && (
+          {isAdmin ? (
             <Link
               to="/admin"
               className="flex items-center gap-1 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 text-[11px] sm:text-xs font-bold transition-colors shadow-sm shrink-0"
@@ -162,7 +164,15 @@ export const Navbar: React.FC = () => {
               <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
               <span className="hidden sm:inline">{isArabic ? "لوحة المشرف" : "Admin"}</span>
             </Link>
-          )}
+          ) : isStaffMember(profile?.role) ? (
+            <Link
+              to="/staff"
+              className="flex items-center gap-1 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 text-[11px] sm:text-xs font-bold transition-colors shadow-sm shrink-0"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 shrink-0" />
+              <span className="hidden sm:inline">{isArabic ? "لوحة العمليات" : "Staff"}</span>
+            </Link>
+          ) : null}
 
           {/* Notifications Bell */}
           <Link

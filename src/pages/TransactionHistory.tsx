@@ -208,12 +208,22 @@ const TransactionHistory: React.FC = () => {
     return matchesSearch && matchesStatus;
   });
 
+  const escapeHtml = (unsafe: any): string => {
+    if (unsafe == null) return '';
+    return String(unsafe)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
   const handleDownloadPDF = () => {
     try {
-      // In Phase 2: If the current filter produces 0 matching orders, do not fall back to exporting every order.
+      // If the current filter produces 0 matching orders, do not fall back to exporting every order.
       const activeList = filteredOrders;
       if (activeList.length === 0) {
-        showToast(isArabic ? "لا توجد طلبات تطابق الفلتر المحدد لتصديرها" : "Aucune commande correspondante à exporter", "info");
+        showToast(isArabic ? "لا توجد معاملات مطابقة لمعايير البحث الحالية للطباعة" : "Aucune transaction correspondante à imprimer", "info");
         return;
       }
       const totalSpent = activeList
@@ -223,8 +233,8 @@ const TransactionHistory: React.FC = () => {
       const completedCount = activeList.filter((o) => o.status?.toLowerCase() === "completed").length;
       const pendingCount = activeList.filter((o) => o.status?.toLowerCase() === "pending").length;
 
-      const userEmail = user?.email || "غير معروف";
-      const userName = user?.displayName || userEmail.split('@')[0];
+      const userEmail = escapeHtml(user?.email || "غير معروف");
+      const userName = escapeHtml(user?.displayName || user?.email?.split('@')[0] || "عميل موري توب");
 
       const htmlContent = `
         <!DOCTYPE html>
@@ -470,14 +480,14 @@ const TransactionHistory: React.FC = () => {
                 
                 return `
                   <tr>
-                    <td class="order-id">#${order.id.slice(0, 8).toUpperCase()}</td>
-                    <td>${formattedDate}</td>
-                    <td style="font-weight: 700;">${order.serviceType || order.serviceName}</td>
-                    <td>${order.paymentMethod === 'bankily' ? (isArabic ? 'بنكيلي' : 'Bankily') : order.paymentMethod === 'sadad' ? (isArabic ? 'سداد' : 'Sadad') : order.paymentMethod === 'gaza' ? (isArabic ? 'غزة باي' : 'Gaza Pay') : order.paymentMethod}</td>
-                    <td style="font-weight: 800; color: #166534;">${order.total || order.amount || 0} MRU</td>
+                    <td class="order-id">#${escapeHtml(order.id.slice(0, 8).toUpperCase())}</td>
+                    <td>${escapeHtml(formattedDate)}</td>
+                    <td style="font-weight: 700;">${escapeHtml(order.serviceType || order.serviceName)}</td>
+                    <td>${escapeHtml(order.paymentMethod === 'bankily' ? (isArabic ? 'بنكيلي' : 'Bankily') : order.paymentMethod === 'sadad' ? (isArabic ? 'سداد' : 'Sadad') : order.paymentMethod === 'gaza' ? (isArabic ? 'غزة باي' : 'Gaza Pay') : (order.paymentMethod || ''))}</td>
+                    <td style="font-weight: 800; color: #166534;">${Number(order.total || order.amount || 0)} MRU</td>
                     <td>
-                      <span class="status-badge status-${orderStatus}">
-                        ${statusLabel}
+                      <span class="status-badge status-${escapeHtml(orderStatus)}">
+                        ${escapeHtml(statusLabel)}
                       </span>
                     </td>
                   </tr>

@@ -70,51 +70,8 @@ export default function Layout({ children }: { children: ReactNode }) {
     fetchSettings();
   }, []);
 
-  useEffect(() => {
-    if (isAdmin && settings && !settings.servicesSeeded) {
-      const seedServices = async () => {
-        try {
-          const { setDoc, doc, getDoc, serverTimestamp } = await import("firebase/firestore");
-          const { SERVICES } = await import("../data/services");
-          
-          for (const s of SERVICES) {
-            const docRef = doc(db, "services", s.id);
-            const docSnap = await getDoc(docRef);
-            // Only seed if document does NOT already exist in Firestore
-            if (!docSnap.exists()) {
-              await setDoc(docRef, {
-                name: s.name,
-                nameAr: s.nameAr || s.name,
-                description: s.description || "",
-                descriptionAr: s.descriptionAr || "",
-                image: s.image || "",
-                priceMru: s.priceMru !== undefined ? s.priceMru : (s.suggestedPrice || s.minAmount || 0),
-                pricingMode: s.pricingMode || (s.packages && s.packages.length > 0 ? "packages" : "fixed"),
-                minAmountMru: s.minAmountMru || s.minAmount || 0,
-                maxAmountMru: s.maxAmountMru || s.maxAmount || 0,
-                badge: s.category === "ألعاب" ? "شحن ألعاب" : s.category === "اشتراكات" ? "اشتراكات" : "خدمات رقمية",
-                imageFit: s.imageFit || "cover",
-                status: "نشط",
-                requiredFields: s.requiredFields || [],
-                optionalFields: s.optionalFields || [],
-                packages: s.packages || [],
-                unit: s.unit || "",
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
-              }, { merge: true });
-            }
-          }
-          await setDoc(doc(db, "settings", "global"), {
-            servicesSeeded: true
-          }, { merge: true });
-          console.log("Services seeded safely without overwriting existing records.");
-        } catch (e) {
-          console.warn("Auto seeding services note: ", e);
-        }
-      };
-      seedServices();
-    }
-  }, [settings, isAdmin]);
+  // Note: Automatic service seeding on admin visits has been permanently disabled
+  // to protect custom catalog configurations, disabled/archived states, and prevent data overwrite.
 
   useEffect(() => {
     if (!user) return;

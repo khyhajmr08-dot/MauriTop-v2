@@ -11,6 +11,20 @@ export function isValidMauritanianPhone(phone: string): boolean {
 }
 
 /**
+ * Checks if a service is currently active and purchasable.
+ * Disabled, draft, paused, maintenance, archived, or deleted services cannot be ordered.
+ */
+export function isServicePurchasable(service: any): boolean {
+  if (!service || typeof service !== 'object') return false;
+  if (service.available === false || service.isAvailable === false) return false;
+  if (service.disabled === true || service.archived === true || service.deleted === true) return false;
+  const status = String(service.status || 'active').toLowerCase();
+  const unpurchasableStatuses = ['inactive', 'draft', 'paused', 'maintenance', 'archived', 'deleted', 'disabled'];
+  if (unpurchasableStatuses.includes(status)) return false;
+  return true;
+}
+
+/**
  * Normalizes service pricing based on pricing mode.
  */
 export function normalizeServicePrice(

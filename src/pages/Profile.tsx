@@ -157,53 +157,37 @@ export default function Profile() {
 
     setSubmittingWithdraw(true);
     try {
-      // Reserve the points and create the pending withdrawal as ONE atomic
-      // transaction. The Firestore rules require both writes to be linked.
-      const withdrawalRef = doc(collection(db, "withdrawals"));
-      const userRef = doc(db, "users", user.uid);
-      const remainingPoints = await runTransaction(db, async (transaction) => {
-        const userSnap = await transaction.get(userRef);
-        if (!userSnap.exists()) throw new Error("PROFILE_NOT_FOUND");
-
-        const currentPoints = Number(userSnap.data().loyaltyPoints ?? 0);
-        if (!Number.isFinite(currentPoints) || currentPoints < amt) {
-          throw new Error("INSUFFICIENT_BALANCE");
-        }
-        if (amt < 500) throw new Error("MINIMUM_WITHDRAWAL");
-
-        transaction.set(withdrawalRef, {
-          userId: user.uid,
-          userName: name || user.displayName || "مستخدم موري توب",
-          userEmail: user.email || "",
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/wallet/withdraw", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
           amount: amt,
-          bankilyPhone: withdrawPhone.trim(),
-          status: "pending",
-          createdAt: serverTimestamp(),
-          adminNote: ""
-        });
-        transaction.update(userRef, {
-          loyaltyPoints: currentPoints - amt,
-          lastWithdrawalRequestId: withdrawalRef.id,
-          updatedAt: serverTimestamp()
-        });
-        return currentPoints - amt;
+          bankilyPhone: withdrawPhone.trim()
+        })
       });
 
-      setLoyaltyPoints(remainingPoints);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "فشل إرسال طلب السحب عبر الخادم");
+      }
+
+      if (typeof data.remainingBalance === 'number') {
+        setLoyaltyPoints(data.remainingBalance);
+      } else {
+        setLoyaltyPoints(prev => Math.max(0, prev - amt));
+      }
+
       haptic.success();
       showToast(isArabic ? "تم إرسال طلب سحب المكافآت إلى الإدارة بنجاح! 🚀" : "Demande de retrait envoyée avec succès !", "success");
       setShowWithdrawModal(false);
       setWithdrawAmount("500");
     } catch (err: any) {
-      console.error("Withdrawal transaction failed:", err);
-      const message = err?.message === "INSUFFICIENT_BALANCE"
-        ? (isArabic ? "الرصيد المتاح غير كافٍ" : "Solde insuffisant")
-        : err?.message === "PROFILE_NOT_FOUND"
-          ? (isArabic ? "تعذر العثور على ملف الحساب" : "Profil introuvable")
-          : err?.message === "MINIMUM_WITHDRAWAL"
-            ? (isArabic ? "الحد الأدنى للسحب هو 500 أوقية جديدة" : "Le retrait minimum est de 500 MRU")
-            : (isArabic ? "فشل إرسال طلب السحب، لم يتم خصم الرصيد. يرجى المحاولة لاحقاً" : "Échec du retrait; aucun solde n'a été débité. Veuillez réessayer.");
-      showToast(message, "error");
+      console.error("Backend withdrawal failed:", err);
+      showToast(err.message || (isArabic ? "فشل إرسال طلب السحب. يرجى المحاولة لاحقاً" : "Échec de l'envoi du retrait."), "error");
     } finally {
       setSubmittingWithdraw(false);
     }
