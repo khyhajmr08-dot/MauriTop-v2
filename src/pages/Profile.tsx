@@ -440,20 +440,10 @@ export default function Profile() {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      if (loyaltyPoints < 500) {
-                        showToast(isArabic ? "الحد الأدنى للسحب هو 500 أوقية" : "Le minimum est de 500 MRU", "error");
-                        return;
-                      }
-                      setShowWithdrawModal(true);
-                    }}
-                    className={cn(
-                      "w-full py-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg",
-                      loyaltyPoints >= 500
-                        ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
-                        : "bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed"
-                    )}
+                    onClick={() => setShowWithdrawModal(true)}
+                    className="w-full py-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-[0.98]"
                   >
+                    <ArrowDownToLine size={16} />
                     <span>{isArabic ? "طلب سحب الأرباح" : "Demander le retrait"}</span>
                   </button>
                   {loyaltyPoints < 500 && (
@@ -479,14 +469,8 @@ export default function Profile() {
                     <span>{isArabic ? "سجل طلبات سحب الأرباح" : "Historique des retraits"}</span>
                   </h3>
                   <button
-                    onClick={() => {
-                      if (loyaltyPoints < 500) {
-                        showToast(isArabic ? "الحد الأدنى للسحب هو 500 أوقية جديدة" : "Min 500 MRU", "error");
-                        return;
-                      }
-                      setShowWithdrawModal(true);
-                    }}
-                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md flex items-center gap-1 cursor-pointer"
+                    onClick={() => setShowWithdrawModal(true)}
+                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md flex items-center gap-1 cursor-pointer active:scale-95"
                   >
                     <span>{isArabic ? "+ طلب سحب جديد" : "+ Nouveau retrait"}</span>
                   </button>
