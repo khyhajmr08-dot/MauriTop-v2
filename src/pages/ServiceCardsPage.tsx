@@ -215,6 +215,7 @@ export default function ServiceCardsPage() {
     return () => clearInterval(interval);
   }, [user]);
 
+// Eliminate fake demonstration cards and activities. Only show authentic user records.
   const displayedServices = realServices;
   const displayedActivities = realActivities;
 

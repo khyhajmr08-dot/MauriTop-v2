@@ -220,17 +220,12 @@ const TransactionHistory: React.FC = () => {
 
   const handleDownloadPDF = () => {
     try {
-      // If a filter is active and matches 0 records, do not silently dump all records
-      const isFiltered = Boolean(searchTerm) || statusFilter !== 'all';
-      const activeList = isFiltered
-        ? filteredOrders
-        : (filteredOrders.length > 0 ? filteredOrders : orders);
-
+      // If the current filter produces 0 matching orders, do not fall back to exporting every order.
+      const activeList = filteredOrders;
       if (activeList.length === 0) {
         showToast(isArabic ? "لا توجد معاملات مطابقة لمعايير البحث الحالية للطباعة" : "Aucune transaction correspondante à imprimer", "info");
         return;
       }
-
       const totalSpent = activeList
         .filter((o) => o.status?.toLowerCase() === "completed" || o.status?.toLowerCase() === "approved")
         .reduce((sum, o) => sum + (o.total || o.amount || 0), 0);
