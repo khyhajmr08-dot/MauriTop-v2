@@ -5,7 +5,7 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { useAuth } from './contexts/AuthContext';
 import { db } from './lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, onSnapshot } from 'firebase/firestore';
 import { AnimatePresence, motion } from 'motion/react';
 import Navbar from './components/Navbar';
 import BottomNavigation from './components/BottomNavigation';
@@ -138,6 +138,22 @@ function InviteHandler() {
 
 function AppContent({ user, isAdmin }: { user: any; isAdmin: boolean }) {
   const { isRtl } = useLanguage();
+  const [maintenanceMode, setMaintenanceMode] = React.useState(false);
+
+  React.useEffect(() => {
+    const settingsRef = doc(db, "settings", "global");
+    const unsubscribe = onSnapshot(
+      settingsRef,
+      (snapshot) => {
+        setMaintenanceMode(snapshot.exists() && snapshot.data()?.maintenanceMode === true);
+      },
+      (error) => {
+        console.warn("Maintenance status sync error:", error);
+        setMaintenanceMode(false);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
   const navigate = useNavigate();
   const location = useLocation();
   const [pushNotification, setPushNotification] = React.useState<{ title: string; body: string } | null>(null);
@@ -203,6 +219,35 @@ function AppContent({ user, isAdmin }: { user: any; isAdmin: boolean }) {
   }, [user, isRtl]);
 
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isPrivilegedRoute = isAdminRoute || location.pathname.startsWith('/staff');
+
+  if (maintenanceMode && !isAdmin && !isPrivilegedRoute) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center bg-[#070B14] px-6 py-12 text-center text-[#F8FAFC]"
+        dir={isRtl ? 'rtl' : 'ltr'}
+      >
+        <div className="w-full max-w-lg rounded-3xl border border-[#243247] bg-[#0B1120] p-8 shadow-2xl sm:p-10">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-3xl" aria-hidden="true">
+            🛠️
+          </div>
+          <p className="mb-2 text-xs font-bold tracking-[0.25em] text-emerald-400">MAURITOP</p>
+          <h1 className="mb-4 text-2xl font-black">
+            {isRtl ? 'المنصة تحت الصيانة مؤقتاً' : 'Plateforme en maintenance'}
+          </h1>
+          <p className="mx-auto max-w-md leading-8 text-[#A8B3C5]">
+            {isRtl
+              ? 'نعمل حالياً على تحسين خدمات MAURITOP. أوقفنا استقبال الطلبات مؤقتاً حفاظاً على سلامة عمليات الشحن. يرجى العودة لاحقاً.'
+              : 'Nous améliorons actuellement les services MAURITOP. Les nouvelles commandes sont temporairement suspendues. Merci de revenir plus tard.'}
+          </p>
+          <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-300">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            {isRtl ? 'وضع الصيانة مفعل' : 'Maintenance mode active'}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen flex flex-col bg-main-bg text-text-primary ${isRtl ? 'rtl font-sans' : 'ltr font-sans'}`} dir={isRtl ? 'rtl' : 'ltr'}>
