@@ -326,30 +326,49 @@ async function startServer() {
         return res.status(400).json({ error: 'الدور المحدد غير صالح.' });
       }
 
-      const firestore = getDb();
-      const targetUserRef = firestore.collection("users").doc(targetUid);
-      const targetDoc = await targetUserRef.get();
-      if (!targetDoc.exists) {
-        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+      if (targetUid === OWNER_UID) {
+        return res.status(403).json({ error: 'لا يمكن تغيير صلاحيات حساب المالك الأساسي.' });
       }
 
-      await targetUserRef.update({
-        staffRole: role,
-        role: role,
-        updatedAt: admin.firestore.Timestamp.now()
+      const firestore = getDb();
+      const targetUserRef = firestore.collection("users").doc(targetUid);
+      const auditLogRef = firestore.collection("admin_logs").doc();
+      const now = admin.firestore.Timestamp.now();
+
+      await firestore.runTransaction(async (transaction) => {
+        const targetDoc = await transaction.get(targetUserRef);
+        if (!targetDoc.exists) {
+          throw new Error("TARGET_USER_NOT_FOUND");
+        }
+
+        const targetData = targetDoc.data() || {};
+        if (String(targetData.email || '').toLowerCase() === OWNER_EMAIL) {
+          throw new Error("OWNER_ROLE_CHANGE_DENIED");
+        }
+
+        transaction.update(targetUserRef, {
+          staffRole: role === 'user' ? null : role,
+          role,
+          updatedAt: now
+        });
+
+        transaction.create(auditLogRef, {
+          action: 'SET_STAFF_ROLE',
+          targetUid,
+          assignedRole: role,
+          performedBy: (req as any).user?.uid || 'owner',
+          timestamp: now
+        });
       });
 
-      // Audit log entry
-      await firestore.collection("admin_logs").add({
-        action: 'SET_STAFF_ROLE',
-        targetUid,
-        assignedRole: role,
-        performedBy: (req as any).user?.uid || 'owner',
-        timestamp: admin.firestore.Timestamp.now()
-      });
-
-      return res.json({ success: true, message: `تم تعيين الدور بنجاح إلى ${role}` });
+      return res.json({ success: true, role, message: `تم تعيين الدور بنجاح إلى ${role}` });
     } catch (err: any) {
+      if (err?.message === "TARGET_USER_NOT_FOUND") {
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+      }
+      if (err?.message === "OWNER_ROLE_CHANGE_DENIED") {
+        return res.status(403).json({ error: 'لا يمكن تغيير صلاحيات حساب المالك.' });
+      }
       console.error("Admin set-role error:", err);
       return res.status(500).json({ error: 'فشل تعيين الدور.' });
     }
