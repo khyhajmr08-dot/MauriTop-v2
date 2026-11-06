@@ -10,9 +10,9 @@ import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import crypto from "crypto";
-import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation";
+import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation.ts";
 
-import firebaseConfig from "./firebase-applet-config.json";
+import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
 async function startServer(options: { serverless?: boolean } = {}): Promise<express.Express> {
   const serverless = options.serverless === true;
