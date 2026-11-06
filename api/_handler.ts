@@ -3,14 +3,22 @@ import application from "../server.ts";
 
 const handler = express();
 
+// Vercel rewrites every /api/* request to one serverless function and places
+// the original path in __path. Restore the canonical Express route path here.
 handler.use((req, _res, next) => {
   const currentUrl = req.url || "/";
-  const queryIndex = currentUrl.indexOf("?");
-  const pathname = queryIndex >= 0 ? currentUrl.slice(0, queryIndex) : currentUrl;
-  const query = queryIndex >= 0 ? currentUrl.slice(queryIndex) : "";
+  const parsedUrl = new URL(currentUrl, "https://mauritop.invalid");
+  const routedPath = parsedUrl.searchParams.get("__path");
 
-  if (pathname !== "/api" && !pathname.startsWith("/api/")) {
-    req.url = `/api${pathname.startsWith("/") ? "" : "/"}${pathname}${query}`;
+  if (routedPath) {
+    parsedUrl.searchParams.delete("__path");
+    const normalizedPath = routedPath.replace(/^\/+/, "");
+    const remainingQuery = parsedUrl.searchParams.toString();
+    req.url = `/api/${normalizedPath}${remainingQuery ? `?${remainingQuery}` : ""}`;
+  } else if (parsedUrl.pathname === "/api/index") {
+    req.url = `/api${parsedUrl.search}`;
+  } else if (parsedUrl.pathname !== "/api" && !parsedUrl.pathname.startsWith("/api/")) {
+    req.url = `/api${parsedUrl.pathname.startsWith("/") ? "" : "/"}${parsedUrl.pathname}${parsedUrl.search}`;
   }
 
   next();
