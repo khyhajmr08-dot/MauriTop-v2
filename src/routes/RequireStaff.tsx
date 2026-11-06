@@ -10,7 +10,7 @@ interface RequireStaffProps {
 
 export const RequireStaff: React.FC<RequireStaffProps> = ({ children, requiredPermission }) => {
   const { user, loading } = useAuth();
-  const [role, setRole] = useState<StaffRole | null>(null);
+  const [access, setAccess] = useState<{ role: string; isOwner: boolean } | null>(null);
   const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
@@ -29,7 +29,12 @@ export const RequireStaff: React.FC<RequireStaffProps> = ({ children, requiredPe
         });
         if (res.ok) {
           const data = await res.json();
-          if (active) setRole(data.role as StaffRole);
+          if (active) {
+            setAccess({
+              role: typeof data.role === "string" ? data.role : "user",
+              isOwner: data.isOwner === true
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to verify staff permission:', err);
@@ -56,8 +61,10 @@ export const RequireStaff: React.FC<RequireStaffProps> = ({ children, requiredPe
     return <Navigate to="/login" replace />;
   }
 
-  // Owner always has access
-  const isOwner = user.email === 'khyhajmr08@gmail.com' || user.uid === 'PqXqqCgdC1eYPz4HKHHLtDRejPD3';
+  // The backend verifies the Firebase token and trusted owner identity.
+  // Never grant owner access using a client-side email comparison alone.
+  const isOwner = access?.isOwner === true;
+  const role = access?.role as StaffRole | undefined;
 
   if (!isOwner && !isStaffMember(role || 'user')) {
     return <Navigate to="/" replace />;
