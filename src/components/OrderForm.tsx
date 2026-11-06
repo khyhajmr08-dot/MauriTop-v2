@@ -690,7 +690,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
             senderRef: senderReference,
             proofImageUrl: uploadedUrl,
             accountDetails: detailsText,
-            fields: fieldValues
+            fields: stableFieldValues
           })
         });
 
@@ -728,7 +728,7 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
             senderRef: senderReference,
             proofImageUrl: uploadedUrl,
             accountDetails: detailsText,
-            fields: fieldValues
+            fields: stableFieldValues
           })
         });
 
