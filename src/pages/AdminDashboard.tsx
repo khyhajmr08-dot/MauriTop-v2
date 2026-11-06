@@ -593,7 +593,9 @@ export default function AdminDashboard() {
       }
 
       setUsersList(prev => prev.map(u =>
-        u.id === targetUser.id ? { ...u, staffRole: newRole, role: newRole } : u
+        u.id === targetUser.id
+          ? { ...u, staffRole: newRole === "user" ? null : newRole, role: newRole }
+          : u
       ));
       cacheService.remove("admin_users");
       const roleLabel = STAFF_ROLE_OPTIONS.find(option => option.value === newRole)?.label || newRole;
