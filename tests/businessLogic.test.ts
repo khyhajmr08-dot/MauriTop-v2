@@ -28,10 +28,11 @@ assert.strictEqual(normalizeServicePrice({ pricingMode: "range", priceMru: 100 }
 assert.strictEqual(normalizeServicePrice({ pricingMode: "range", priceMru: 100 }, 0), 100);
 console.log("✓ Production normalizeServicePrice passed.");
 
-// 3. Guest tracking token hash test
-const rawToken = crypto.randomBytes(16).toString("hex");
+// 3. Guest tracking token hash test (32 random bytes = 64 hexadecimal characters)
+const rawToken = crypto.randomBytes(32).toString("hex");
 const hashedToken = crypto.createHash("sha256").update(rawToken).digest("hex");
-assert.strictEqual(rawToken.length, 32);
+assert.strictEqual(rawToken.length, 64);
+assert.match(rawToken, /^[a-f0-9]{64}$/);
 assert.strictEqual(hashedToken.length, 64);
 assert.strictEqual(crypto.createHash("sha256").update(rawToken).digest("hex"), hashedToken);
 console.log("✓ Cryptographic guest tracking secret generation & SHA-256 hash passed.");
