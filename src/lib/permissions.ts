@@ -1,15 +1,16 @@
 export type StaffRole = 'user' | 'support' | 'orders' | 'finance' | 'catalog' | 'content' | 'analytics';
 
 export type StaffPermission =
-  | 'view_orders'
-  | 'update_orders'
-  | 'view_finance'
+  | 'view_dashboard'
+  | 'manage_orders'
   | 'manage_finance'
-  | 'manage_catalog'
-  | 'manage_content'
+  | 'export_data'
   | 'view_analytics'
-  | 'view_support'
-  | 'manage_support';
+  | 'manage_services'
+  | 'manage_content'
+  | 'manage_support'
+  | 'manage_users'
+  | 'manage_settings';
 
 export interface StaffRoleDefinition {
   id: StaffRole;
@@ -33,49 +34,49 @@ export const STAFF_ROLES: Record<StaffRole, StaffRoleDefinition> = {
     id: 'support',
     nameAr: 'فريق الدعم الفني',
     nameFr: 'Support client',
-    descAr: 'الرد على استفسارات العملاء والمحادثات ومتابعة المشكلات',
-    descFr: 'Gestion des réclamations clients et support en direct',
-    permissions: ['view_support', 'manage_support', 'view_orders']
+    descAr: 'متابعة استفسارات العملاء والدعم المصرح به',
+    descFr: 'Gestion des demandes clients et support autorisé',
+    permissions: ['view_dashboard', 'manage_support', 'manage_orders']
   },
   orders: {
     id: 'orders',
     nameAr: 'معالجة الطلبات',
     nameFr: 'Gestionnaire des commandes',
-    descAr: 'متابعة الطلبات، تحديث الحالات، والتحقق من إيصالات الدفع',
-    descFr: 'Suivi et validation des commandes et reçus de paiement',
-    permissions: ['view_orders', 'update_orders', 'view_support']
+    descAr: 'متابعة الطلبات وتحديث حالاتها والتحقق من الإيصالات',
+    descFr: 'Suivi des commandes, mise à jour des statuts et vérification des reçus',
+    permissions: ['view_dashboard', 'manage_orders']
   },
   finance: {
     id: 'finance',
     nameAr: 'الإدارة المالية',
     nameFr: 'Finances',
-    descAr: 'مراجعة المعاملات، أرصدة المحافظ، وطلبات السحب',
-    descFr: 'Validation des transactions, soldes et demandes de retrait',
-    permissions: ['view_finance', 'manage_finance', 'view_orders']
+    descAr: 'صلاحيات مالية وتقارير محددة حسب دور الموظف',
+    descFr: 'Accès aux fonctions financières et rapports autorisés',
+    permissions: ['view_dashboard', 'manage_finance', 'export_data', 'view_analytics']
   },
   catalog: {
     id: 'catalog',
     nameAr: 'إدارة الخدمات والكتالوج',
     nameFr: 'Catalogue des services',
-    descAr: 'تحديث أسعار الخدمات وباقاتها وتوفرها',
-    descFr: 'Gestion des tarifs, packages et disponibilité des services',
-    permissions: ['manage_catalog']
+    descAr: 'إدارة الخدمات والأسعار والباقات والتوفر',
+    descFr: 'Gestion des services, tarifs, forfaits et disponibilité',
+    permissions: ['view_dashboard', 'manage_services']
   },
   content: {
     id: 'content',
     nameAr: 'إدارة المحتوى والإعلانات',
     nameFr: 'Contenu & Annonces',
-    descAr: 'إدارة الإعلانات، الأسئلة الشائعة، والمنشورات الترويجية',
-    descFr: 'Mise à jour des bannières, FAQ et annonces',
-    permissions: ['manage_content']
+    descAr: 'إدارة المحتوى والإعلانات المنشورة',
+    descFr: 'Gestion du contenu et des annonces publiées',
+    permissions: ['view_dashboard', 'manage_content']
   },
   analytics: {
     id: 'analytics',
     nameAr: 'التحليلات والتقارير',
     nameFr: 'Analyses & Rapports',
-    descAr: 'متابعة الزيارات، مؤشرات الأداء، وتقارير المبيعات',
-    descFr: 'Consultation des métriques, trafic et ventes',
-    permissions: ['view_analytics']
+    descAr: 'عرض مؤشرات الأداء والتقارير المصرح بها',
+    descFr: 'Consultation des indicateurs et rapports autorisés',
+    permissions: ['view_dashboard', 'view_analytics', 'export_data']
   }
 };
 
