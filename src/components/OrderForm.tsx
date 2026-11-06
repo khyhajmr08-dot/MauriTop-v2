@@ -536,12 +536,125 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
     setIsSubmittingOrder(true);
     setLoading(true);
     setMsg("");
+
     let uploadedReceiptPath: string | null = null;
     let orderRequestMayHaveReachedServer = false;
 
     try {
-      const detailsText = (service.fields || []).map(f => `${language === 'ar' ? f.labelAr : f.label}: ${fieldValues[f.id] || ""}`).join(" | ");
+      const detailsText = (service.fields || [])
+        .map(field => `${language === 'ar' ? field.labelAr : field.label}: ${fieldValues[field.id] || ""}`)
+        .join(" | ");
       const isQuoteMode = service.pricingMode === "quote";
+      const cleanSenderPhone = sender.replace(/\D/g, "");
+      const stableFieldValues = Object.keys(fieldValues).sort().reduce((result, key) => {
+        result[key] = fieldValues[key];
+        return result;
+      }, {} as Record<string, string>);
+
+      // A retry with unchanged checkout data reuses the same attempt ID,
+      // tracking secret and uploaded receipt URL.
+      const submissionSignature = JSON.stringify({
+        serviceId: service.id,
+        serviceType: service.nameAr || service.name,
+        amount: isQuoteMode ? 0 : Number(amount),
+        paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+        senderPhone: cleanSenderPhone,
+        senderReference,
+        accountDetails: detailsText,
+        fields: stableFieldValues,
+        receipt: file ? {
+          name: file.name,
+          size: file.size,
+          lastModified: file.lastModified,
+          type: file.type
+        } : null
+      });
+
+      if (!checkoutAttemptRef.current || checkoutAttemptRef.current.signature !== submissionSignature) {
+        checkoutAttemptRef.current = {
+          signature: submissionSignature,
+          id: createSecureHexToken(16),
+          trackingToken: createSecureHexToken(32),
+          uploadedReceiptUrl: null
+        };
+      }
+
+      const checkoutAttempt = checkoutAttemptRef.current;
+      if (!checkoutAttempt) {
+        throw new Error(language === 'ar' ? "تعذر تهيئة محاولة الطلب بأمان." : "Impossible d'initialiser la commande en sécurité.");
+      }
+
+      const orderRef = doc(db, "orders", checkoutAttempt.id);
+      let uploadedUrl = checkoutAttempt.uploadedReceiptUrl || "";
+
+      if (file && !isQuoteMode) {
+        if (file.size > 8 * 1024 * 1024) {
+          throw new Error(language === 'ar' ? "حجم الصورة كبير جداً، يرجى اختيار صورة أصغر" : "Image trop grande, veuillez en choisir une plus petite");
+        }
+        if (!/^image\/(jpeg|png|webp|gif)$/i.test(file.type)) {
+          throw new Error(language === 'ar' ? "نوع صورة الإيصال غير مدعوم" : "Type de fichier justificatif non pris en charge");
+        }
+
+        const receiptUserId = user ? user.uid : "guest";
+        uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}.jpg`;
+
+        if (uploadedUrl) {
+          setUploadProgress(100);
+          setProcessingStatus(language === 'ar' ? "الإيصال محفوظ، جاري إعادة تأكيد الطلب..." : "Reprise de la confirmation...");
+        } else {
+          setUploadProgress(0);
+          setProcessingStatus(language === 'ar' ? "جاري تهيئة رفع صورة الإيصال..." : "Initialisation du transfert...");
+
+          const receiptRef = ref(storage, uploadedReceiptPath);
+          const uploadTask = uploadBytesResumable(receiptRef, file, {
+            contentType: file.type || "image/jpeg",
+            customMetadata: { ownerUid: receiptUserId, orderId: orderRef.id }
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              try { uploadTask.cancel(); } catch {}
+              reject(new Error(language === 'ar' ? "استغرق رفع الإيصال وقتاً طويلاً، يرجى المحاولة ثانية" : "Délai d'attente de téléchargement dépassé"));
+            }, 60000);
+
+            uploadTask.on(
+              "state_changed",
+              (snapshot) => {
+                if (snapshot.totalBytes > 0) {
+                  const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                  setUploadProgress(Math.min(progress, 100));
+                  setProcessingStatus(
+                    language === 'ar'
+                      ? `جاري نقل بيانات الإيصال (${progress}%)...`
+                      : `Transfert (${progress}%)...`
+                  );
+                }
+              },
+              (uploadError) => {
+                window.clearTimeout(timeout);
+                console.error("Receipt upload error:", uploadError);
+                reject(new Error(language === 'ar'
+                  ? "تعذر رفع صورة الإيصال، يرجى التحقق من اتصالك والمحاولة مجدداً"
+                  : "Erreur de téléchargement"));
+              },
+              () => {
+                window.clearTimeout(timeout);
+                resolve();
+              }
+            );
+          });
+
+          uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          checkoutAttempt.uploadedReceiptUrl = uploadedUrl;
+          setUploadProgress(100);
+          setProcessingStatus(language === 'ar'
+            ? "تم رفع الإيصال بنجاح! جاري تأكيد الطلب..."
+            : "Reçu envoyé ! Confirmation en cours...");
+        }
+      } else {
+        setProcessingStatus(language === 'ar' ? "جاري إرسال الطلب..." : "Envoi...");
+      }
+
       const requestOrderJson = async (url: string, init: RequestInit) => {
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 45000);
@@ -585,8 +698,12 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           orderRequestMayHaveReachedServer = guestResponse.status >= 500;
           throw new Error(guestResult.error || (language === 'ar' ? "تعذر إرسال طلب الزائر" : "Erreur de commande"));
         }
-        if (guestResult.success !== true || typeof guestResult.orderId !== "string" || guestResult.trackingToken !== checkoutAttempt.trackingToken) {
-          throw new Error(language === 'ar' ? "وصل رد غير مكتمل من الخادم. أعد المحاولة من النافذة نفسها." : "Réponse de confirmation incomplète. Réessayez depuis cette fenêtre.");
+        if (guestResult.success !== true ||
+            typeof guestResult.orderId !== "string" ||
+            guestResult.trackingToken !== checkoutAttempt.trackingToken) {
+          throw new Error(language === 'ar'
+            ? "وصل رد غير مكتمل من الخادم. أعد المحاولة من النافذة نفسها."
+            : "Réponse de confirmation incomplète. Réessayez depuis cette fenêtre.");
         }
 
         setGuestOrderId(guestResult.orderId);
@@ -617,10 +734,14 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
 
         if (!authOrderResponse.ok) {
           orderRequestMayHaveReachedServer = authOrderResponse.status >= 500;
-          throw new Error(authResult.error || (language === 'ar' ? "فشل إنشاء الطلب الموثق عبر السيرفر" : "Échec de création de commande"));
+          throw new Error(authResult.error || (language === 'ar'
+            ? "فشل إنشاء الطلب الموثق عبر السيرفر"
+            : "Échec de création de commande"));
         }
         if (authResult.success !== true || authResult.orderId !== orderRef.id) {
-          throw new Error(language === 'ar' ? "لم يصل تأكيد صحيح للطلب من الخادم. أعد المحاولة من النافذة نفسها." : "Confirmation de commande invalide. Réessayez depuis cette fenêtre.");
+          throw new Error(language === 'ar'
+            ? "لم يصل تأكيد صحيح للطلب من الخادم. أعد المحاولة من النافذة نفسها."
+            : "Confirmation de commande invalide. Réessayez depuis cette fenêtre.");
         }
       }
 
@@ -628,9 +749,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       uploadedReceiptPath = null;
 
       setProcessingStatus(language === 'ar' ? "تم الإرسال بنجاح! 🎉" : "Succès! 🎉");
-      
+
       const serviceName = language === 'ar' ? (service.nameAr || service.name) : (service.nameFr || service.name);
-      
       setSubmittedOrderInfo({
         serviceName,
         amount: isQuoteMode ? 0 : Number(amount),
@@ -648,14 +768,10 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       showToast(successMessage, 'success');
       haptic.success();
       confetti({ particleCount: 200, spread: 80, origin: { y: 0.5 } });
-      
-      // Auto-redirect to /orders after 3.2 seconds only if logged in
-      if (user) {
-        setTimeout(() => {
-          navigate('/orders');
-        }, 3200);
-      }
 
+      if (user) {
+        window.setTimeout(() => navigate('/orders'), 3200);
+      }
     } catch (err: any) {
       if (uploadedReceiptPath && !orderRequestMayHaveReachedServer) {
         try {
@@ -665,18 +781,19 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           console.warn("Could not clean up an orphaned receipt upload:", cleanupError);
         }
       }
+
       setLoading(false);
       console.error(err);
       haptic.error();
-      const errorMessage = err.message || (language === 'ar'
+      const errorMessage = err?.message || (language === 'ar'
         ? "❌ حدث خطأ أثناء إرسال الطلب. يرجى التحقق من الاتصال وإعادة المحاولة."
         : "❌ Échec de la soumission de la commande. Veuillez vérifier votre connexion et réessayer.");
       showToast(errorMessage, 'error');
       setMsg(errorMessage);
       try {
         handleFirestoreError(err, OperationType.CREATE, 'orders');
-      } catch (firestoreErr) {
-        console.error("Firestore error handled:", firestoreErr);
+      } catch (firestoreError) {
+        console.error("Firestore error handled:", firestoreError);
       }
     } finally {
       setLoading(false);
