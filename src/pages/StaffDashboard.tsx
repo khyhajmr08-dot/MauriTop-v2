@@ -10,6 +10,7 @@ interface StaffProfile {
   email: string;
   role: StaffRole;
   permissions: StaffPermission[];
+  isOwner: boolean;
 }
 
 export const StaffDashboard: React.FC = () => {
@@ -70,14 +71,14 @@ export const StaffDashboard: React.FC = () => {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          {profile?.isOwner && (
             <Link
               to="/admin"
               className="px-4 py-2 bg-[#111B2E] hover:bg-[#1A263D] border border-[#243247] text-sm font-medium rounded-lg transition"
             >
-              {isAr ? 'لوحة الإدارة' : "Administration"}
+              {isAr ? 'لوحة المالك' : "Owner dashboard"}
             </Link>
-          </div>
+          )}
         </div>
 
         {/* Permissions Overview */}
@@ -117,24 +118,36 @@ export const StaffDashboard: React.FC = () => {
             <p className="text-xs text-[#A8B3C5]">
               {isAr ? 'متابعة الطلبات الجديدة وتأكيد تحويلات بنكيلي وسداد وGazaPay' : 'Vérification et validation des commandes récentes'}
             </p>
-            <Link
-              to="/admin"
-              className="inline-block text-xs text-emerald-400 hover:text-emerald-300 font-medium pt-2"
-            >
-              {isAr ? 'فتح قسم الطلبات ←' : 'Accéder aux commandes →'}
-            </Link>
+            {profile?.isOwner ? (
+              <Link
+                to="/admin"
+                className="inline-block text-xs text-emerald-400 hover:text-emerald-300 font-medium pt-2"
+              >
+                {isAr ? 'فتح قسم الطلبات ←' : 'Accéder aux commandes →'}
+              </Link>
+            ) : (
+              <p className="pt-2 text-xs text-amber-300">
+                {isAr
+                  ? 'بوابة معالجة الطلبات الخاصة بالموظفين لم تُفعّل بعد؛ لن نوجّهك إلى لوحة المالك المحمية.'
+                  : 'Le module de traitement des commandes pour le personnel n’est pas encore activé.'}
+              </p>
+            )}
           </div>
 
           <div className="bg-[#0B1120] border border-[#243247] rounded-xl p-5 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium text-white">{isAr ? 'سجل الأمان والعمليات' : 'Journal des opérations'}</h3>
+              <h3 className="font-medium text-white">{isAr ? 'نطاق الوصول والتدقيق' : 'Accès et audit'}</h3>
               <AlertCircle className="w-4 h-4 text-amber-400" />
             </div>
             <p className="text-xs text-[#A8B3C5]">
-              {isAr ? 'جميع العمليات وتغييرات الحالة مسجلة ومؤمنة في النظام' : 'Toutes les actions sont tracées de manière auditable'}
+              {isAr
+                ? 'تُعرض الصلاحيات التي أكدها الخادم لهذا الحساب. لا تمنح هذه الصفحة صلاحيات إضافية.'
+                : 'This page shows the permissions confirmed by the server; it does not grant additional access.'}
             </p>
             <span className="inline-block text-xs text-[#A8B3C5] pt-2">
-              {isAr ? 'نظام الأمان نشط' : 'Sécurité active'}
+              {profile?.isOwner
+                ? (isAr ? 'حساب المالك' : 'Owner account')
+                : (isAr ? 'وصول موظف محدود' : 'Restricted staff access')}
             </span>
           </div>
         </div>
