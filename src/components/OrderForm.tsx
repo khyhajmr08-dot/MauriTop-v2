@@ -28,6 +28,15 @@ import {
   subscribePaymentSettings 
 } from "../lib/paymentSettings";
 
+function createSecureHexToken(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error("Secure random generation is unavailable. Please use HTTPS and try again.");
+  }
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function getQuantity(service: Service | undefined, amount: number) {
   if (!service) return 0;
   if (!service.packages || service.packages.length === 0) {
@@ -481,6 +490,13 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
   }
 
   const [guestTrackingToken, setGuestTrackingToken] = useState<string | null>(null);
+  const [guestOrderId, setGuestOrderId] = useState<string | null>(null);
+  const checkoutAttemptRef = useRef<{
+    signature: string;
+    id: string;
+    trackingToken: string;
+    uploadedReceiptUrl: string | null;
+  } | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -520,13 +536,56 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
     setIsSubmittingOrder(true);
     setLoading(true);
     setMsg("");
+
     let uploadedReceiptPath: string | null = null;
+    let orderRequestMayHaveReachedServer = false;
 
     try {
-      const detailsText = (service.fields || []).map(f => `${language === 'ar' ? f.labelAr : f.label}: ${fieldValues[f.id] || ""}`).join(" | ");
+      const detailsText = (service.fields || [])
+        .map(field => `${language === 'ar' ? field.labelAr : field.label}: ${fieldValues[field.id] || ""}`)
+        .join(" | ");
       const isQuoteMode = service.pricingMode === "quote";
-      const orderRef = doc(collection(db, "orders"));
-      let uploadedUrl = "";
+      const cleanSenderPhone = sender.replace(/\D/g, "");
+      const stableFieldValues = Object.keys(fieldValues).sort().reduce((result, key) => {
+        result[key] = fieldValues[key];
+        return result;
+      }, {} as Record<string, string>);
+
+      // A retry with unchanged checkout data reuses the same attempt ID,
+      // tracking secret and uploaded receipt URL.
+      const submissionSignature = JSON.stringify({
+        serviceId: service.id,
+        serviceType: service.nameAr || service.name,
+        amount: isQuoteMode ? 0 : Number(amount),
+        paymentMethod: isQuoteMode ? "quote" : paymentMethod,
+        senderPhone: cleanSenderPhone,
+        senderReference,
+        accountDetails: detailsText,
+        fields: stableFieldValues,
+        receipt: file ? {
+          name: file.name,
+          size: file.size,
+          lastModified: file.lastModified,
+          type: file.type
+        } : null
+      });
+
+      if (!checkoutAttemptRef.current || checkoutAttemptRef.current.signature !== submissionSignature) {
+        checkoutAttemptRef.current = {
+          signature: submissionSignature,
+          id: createSecureHexToken(16),
+          trackingToken: createSecureHexToken(32),
+          uploadedReceiptUrl: null
+        };
+      }
+
+      const checkoutAttempt = checkoutAttemptRef.current;
+      if (!checkoutAttempt) {
+        throw new Error(language === 'ar' ? "تعذر تهيئة محاولة الطلب بأمان." : "Impossible d'initialiser la commande en sécurité.");
+      }
+
+      const orderRef = doc(db, "orders", checkoutAttempt.id);
+      let uploadedUrl = checkoutAttempt.uploadedReceiptUrl || "";
 
       if (file && !isQuoteMode) {
         if (file.size > 8 * 1024 * 1024) {
@@ -536,66 +595,93 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
           throw new Error(language === 'ar' ? "نوع صورة الإيصال غير مدعوم" : "Type de fichier justificatif non pris en charge");
         }
 
-        setUploadProgress(0);
-        setProcessingStatus(language === 'ar' ? "جاري تهيئة رفع صورة الإيصال..." : "Initialisation du transfert...");
-
         const receiptUserId = user ? user.uid : "guest";
-        uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}_${Date.now()}.jpg`;
-        const receiptRef = ref(storage, uploadedReceiptPath);
+        uploadedReceiptPath = `order-receipts/${receiptUserId}/${orderRef.id}.jpg`;
 
-        // Upload directly using uploadBytesResumable to track genuine progress without FileReader failures
-        const uploadTask = uploadBytesResumable(receiptRef, file, {
-          contentType: file.type || "image/jpeg",
-          customMetadata: { ownerUid: receiptUserId, orderId: orderRef.id }
-        });
+        if (uploadedUrl) {
+          setUploadProgress(100);
+          setProcessingStatus(language === 'ar' ? "الإيصال محفوظ، جاري إعادة تأكيد الطلب..." : "Reprise de la confirmation...");
+        } else {
+          setUploadProgress(0);
+          setProcessingStatus(language === 'ar' ? "جاري تهيئة رفع صورة الإيصال..." : "Initialisation du transfert...");
 
-        await new Promise<void>((resolve, reject) => {
-          // Timeout safeguards upload from hanging indefinitely
-          const timeout = setTimeout(() => {
-            try { uploadTask.cancel(); } catch {}
-            reject(new Error(language === 'ar' ? "استغرق رفع الإيصال وقتاً طويلاً، يرجى المحاولة ثانية" : "Délai d'attente de téléchargement dépassé"));
-          }, 60000);
+          const receiptRef = ref(storage, uploadedReceiptPath);
+          const uploadTask = uploadBytesResumable(receiptRef, file, {
+            contentType: file.type || "image/jpeg",
+            customMetadata: { ownerUid: receiptUserId, orderId: orderRef.id }
+          });
 
-          uploadTask.on(
-            "state_changed",
-            (snapshot) => {
-              if (snapshot.totalBytes > 0) {
-                const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-                setUploadProgress(Math.min(progress, 100));
-                setProcessingStatus(
-                  language === 'ar'
-                    ? `جاري نقل بيانات الإيصال (${progress}%)...`
-                    : `Transfert (${progress}%)...`
-                );
+          await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              try { uploadTask.cancel(); } catch {}
+              reject(new Error(language === 'ar' ? "استغرق رفع الإيصال وقتاً طويلاً، يرجى المحاولة ثانية" : "Délai d'attente de téléchargement dépassé"));
+            }, 60000);
+
+            uploadTask.on(
+              "state_changed",
+              (snapshot) => {
+                if (snapshot.totalBytes > 0) {
+                  const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                  setUploadProgress(Math.min(progress, 100));
+                  setProcessingStatus(
+                    language === 'ar'
+                      ? `جاري نقل بيانات الإيصال (${progress}%)...`
+                      : `Transfert (${progress}%)...`
+                  );
+                }
+              },
+              (uploadError) => {
+                window.clearTimeout(timeout);
+                console.error("Receipt upload error:", uploadError);
+                reject(new Error(language === 'ar'
+                  ? "تعذر رفع صورة الإيصال، يرجى التحقق من اتصالك والمحاولة مجدداً"
+                  : "Erreur de téléchargement"));
+              },
+              () => {
+                window.clearTimeout(timeout);
+                resolve();
               }
-            },
-            (err) => {
-              clearTimeout(timeout);
-              console.error("Receipt upload error:", err);
-              reject(new Error(language === 'ar' ? "تعذر رفع صورة الإيصال، يرجى التحقق من اتصالك والمحاولة مجدداً" : "Erreur de téléchargement"));
-            },
-            () => {
-              clearTimeout(timeout);
-              resolve();
-            }
-          );
-        });
+            );
+          });
 
-        uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
-        setUploadProgress(100);
-        setProcessingStatus(language === 'ar' ? "تم رفع الإيصال بنجاح! جاري تأكيد الطلب..." : "Reçu envoyé ! Confirmation en cours...");
+          uploadedUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          checkoutAttempt.uploadedReceiptUrl = uploadedUrl;
+          setUploadProgress(100);
+          setProcessingStatus(language === 'ar'
+            ? "تم رفع الإيصال بنجاح! جاري تأكيد الطلب..."
+            : "Reçu envoyé ! Confirmation en cours...");
+        }
       } else {
         setProcessingStatus(language === 'ar' ? "جاري إرسال الطلب..." : "Envoi...");
       }
 
-      const cleanSenderPhone = sender.replace(/\D/g, '');
+      const requestOrderJson = async (url: string, init: RequestInit) => {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 45000);
+        try {
+          const response = await fetch(url, { ...init, signal: controller.signal });
+          const data = await response.json().catch(() => ({}));
+          return { response, data };
+        } catch (requestError) {
+          if (controller.signal.aborted) {
+            throw new Error(language === 'ar'
+              ? "انتهت مهلة انتظار تأكيد الطلب. أعد المحاولة من النافذة نفسها؛ سنستخدم رقم المحاولة نفسه لتجنب التكرار."
+              : "Le délai de confirmation a expiré. Réessayez depuis cette fenêtre pour éviter une commande en double.");
+          }
+          throw requestError;
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      };
 
       if (!user) {
-        // Guest Checkout submission via backend API endpoint
-        const guestResponse = await fetch("/api/guest/orders", {
+        orderRequestMayHaveReachedServer = true;
+        const { response: guestResponse, data: guestResult } = await requestOrderJson("/api/guest/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            attemptId: checkoutAttempt.id,
+            trackingToken: checkoutAttempt.trackingToken,
             serviceId: service.id,
             serviceType: service.nameAr || service.name,
             amount: isQuoteMode ? 0 : Number(amount),
@@ -604,20 +690,28 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
             senderRef: senderReference,
             proofImageUrl: uploadedUrl,
             accountDetails: detailsText,
-            fields: fieldValues
+            fields: stableFieldValues
           })
         });
 
-        const guestResult = await guestResponse.json();
         if (!guestResponse.ok) {
+          orderRequestMayHaveReachedServer = guestResponse.status >= 500;
           throw new Error(guestResult.error || (language === 'ar' ? "تعذر إرسال طلب الزائر" : "Erreur de commande"));
         }
+        if (guestResult.success !== true ||
+            typeof guestResult.orderId !== "string" ||
+            guestResult.trackingToken !== checkoutAttempt.trackingToken) {
+          throw new Error(language === 'ar'
+            ? "وصل رد غير مكتمل من الخادم. أعد المحاولة من النافذة نفسها."
+            : "Réponse de confirmation incomplète. Réessayez depuis cette fenêtre.");
+        }
 
+        setGuestOrderId(guestResult.orderId);
         setGuestTrackingToken(guestResult.trackingToken);
       } else {
-        // Authenticated customer submission: strictly routed through backend endpoint with verification
         const idToken = await user.getIdToken();
-        const authOrderResponse = await fetch("/api/orders/create", {
+        orderRequestMayHaveReachedServer = true;
+        const { response: authOrderResponse, data: authResult } = await requestOrderJson("/api/orders/create", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -634,13 +728,20 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
             senderRef: senderReference,
             proofImageUrl: uploadedUrl,
             accountDetails: detailsText,
-            fields: fieldValues
+            fields: stableFieldValues
           })
         });
 
-        const authResult = await authOrderResponse.json().catch(() => ({}));
         if (!authOrderResponse.ok) {
-          throw new Error(authResult.error || (language === 'ar' ? "فشل إنشاء الطلب الموثق عبر السيرفر" : "Échec de création de commande"));
+          orderRequestMayHaveReachedServer = authOrderResponse.status >= 500;
+          throw new Error(authResult.error || (language === 'ar'
+            ? "فشل إنشاء الطلب الموثق عبر السيرفر"
+            : "Échec de création de commande"));
+        }
+        if (authResult.success !== true || authResult.orderId !== orderRef.id) {
+          throw new Error(language === 'ar'
+            ? "لم يصل تأكيد صحيح للطلب من الخادم. أعد المحاولة من النافذة نفسها."
+            : "Confirmation de commande invalide. Réessayez depuis cette fenêtre.");
         }
       }
 
@@ -648,9 +749,8 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       uploadedReceiptPath = null;
 
       setProcessingStatus(language === 'ar' ? "تم الإرسال بنجاح! 🎉" : "Succès! 🎉");
-      
+
       const serviceName = language === 'ar' ? (service.nameAr || service.name) : (service.nameFr || service.name);
-      
       setSubmittedOrderInfo({
         serviceName,
         amount: isQuoteMode ? 0 : Number(amount),
@@ -668,36 +768,35 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
       showToast(successMessage, 'success');
       haptic.success();
       confetti({ particleCount: 200, spread: 80, origin: { y: 0.5 } });
-      
-      // Auto-redirect to /orders after 3.2 seconds only if logged in
-      if (user) {
-        setTimeout(() => {
-          navigate('/orders');
-        }, 3200);
-      }
 
+      if (user) {
+        window.setTimeout(() => navigate('/orders'), 3200);
+      }
     } catch (err: any) {
-      if (uploadedReceiptPath) {
+      if (uploadedReceiptPath && !orderRequestMayHaveReachedServer) {
         try {
           await deleteObject(ref(storage, uploadedReceiptPath));
+          if (checkoutAttemptRef.current) checkoutAttemptRef.current.uploadedReceiptUrl = null;
         } catch (cleanupError) {
           console.warn("Could not clean up an orphaned receipt upload:", cleanupError);
         }
       }
+
       setLoading(false);
       console.error(err);
       haptic.error();
-      const errorMessage = err.message || (language === 'ar'
+      const errorMessage = err?.message || (language === 'ar'
         ? "❌ حدث خطأ أثناء إرسال الطلب. يرجى التحقق من الاتصال وإعادة المحاولة."
         : "❌ Échec de la soumission de la commande. Veuillez vérifier votre connexion et réessayer.");
       showToast(errorMessage, 'error');
       setMsg(errorMessage);
       try {
         handleFirestoreError(err, OperationType.CREATE, 'orders');
-      } catch (firestoreErr) {
-        console.error("Firestore error handled:", firestoreErr);
+      } catch (firestoreError) {
+        console.error("Firestore error handled:", firestoreError);
       }
     } finally {
+      setLoading(false);
       setIsSubmittingOrder(false);
     }
   }
@@ -1986,6 +2085,29 @@ export default function OrderForm({ preSelectedServiceId }: { preSelectedService
                   ? 'تم استلام طلبك وبدأ فريق الدعم في معالجته فوراً.'
                   : 'Votre demande a été reçue et est en cours de traitement par notre équipe.'}
               </p>
+
+              {/* Guest order ID is required together with the secret token for tracking */}
+              {guestOrderId && (
+                <div className="bg-slate-950/70 border border-cyan-500/30 rounded-2xl p-4 mb-4 text-center space-y-2">
+                  <p className="text-xs font-black text-cyan-300">
+                    {language === 'ar' ? 'رقم طلبك:' : 'Numéro de commande :'}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 bg-slate-900/90 py-2 px-3 rounded-xl border border-white/10 font-mono font-black text-sm text-white">
+                    <span className="select-all break-all" dir="ltr">{guestOrderId}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(guestOrderId);
+                        showToast(language === 'ar' ? 'تم نسخ رقم الطلب' : 'Numéro copié', 'success');
+                      }}
+                      className="p-1 text-cyan-400 hover:text-white"
+                      title={language === 'ar' ? 'نسخ رقم الطلب' : 'Copier le numéro'}
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Guest Secret Tracking Token Display */}
               {guestTrackingToken && (

@@ -115,7 +115,7 @@ export default function TrackOrder() {
               required
               value={trackingToken}
               onChange={(e) => setTrackingToken(e.target.value)}
-              placeholder="32-character secret token"
+              placeholder="64-character secret token"
               className="w-full bg-[#050811] border border-white/10 rounded-xl px-4 py-3 text-sm text-white font-mono outline-none focus:border-emerald-500 transition-colors"
             />
           </div>

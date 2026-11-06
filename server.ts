@@ -167,7 +167,10 @@ async function startServer() {
       next();
     } catch (err) {
       console.error("Maintenance check error:", err);
-      next();
+      return res.status(503).json({
+        code: 'MAINTENANCE_STATUS_UNAVAILABLE',
+        error: 'تعذر التحقق من حالة المنصة حالياً. لم يتم قبول الطلب؛ يرجى المحاولة لاحقاً.'
+      });
     }
   };
 
@@ -356,6 +359,8 @@ async function startServer() {
   app.post("/api/guest/orders", checkMaintenanceMode, rateLimit(10, 60_000), async (req, res) => {
     try {
       const {
+        attemptId,
+        trackingToken,
         serviceId,
         serviceType,
         paymentMethod,
@@ -366,6 +371,11 @@ async function startServer() {
         fields,
         amount
       } = req.body || {};
+
+      if (typeof attemptId !== "string" || !/^[a-f0-9]{32}$/i.test(attemptId) ||
+          typeof trackingToken !== "string" || !/^[a-f0-9]{64}$/i.test(trackingToken)) {
+        return res.status(400).json({ error: 'بيانات محاولة الطلب غير صالحة. يرجى تحديث الصفحة والمحاولة مجدداً.' });
+      }
 
       // 1. Phone number validation (Mauritanian 8-digit starting with 2, 3, or 4)
       const cleanPhone = String(senderPhone || '').replace(/\D/g, '');
@@ -387,8 +397,11 @@ async function startServer() {
         return res.status(400).json({ error: 'هذه الخدمة غير متاحة للشراء حالياً أو تم إيقافها مؤقتاً.' });
       }
 
-      // Calculate authoritative amount (support quote mode with 0 amount)
-      const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
+      // Quote mode is controlled only by trusted service configuration.
+      const isQuoteMode = sData.pricingMode === "quote";
+      if ((String(paymentMethod || "").toLowerCase() === "quote") !== isQuoteMode) {
+        return res.status(400).json({ error: 'طريقة التسعير المرسلة لا تطابق إعدادات الخدمة.' });
+      }
       let verifiedAmount = isQuoteMode ? 0 : Number(amount || 0);
       if (sData.pricingMode === "fixed") {
         verifiedAmount = Number(sData.priceMru || sData.price || 0);
@@ -397,14 +410,19 @@ async function startServer() {
         return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
       }
 
-      // Verify payment method in Firestore settings
-      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
-      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
-      if (settingsDoc.exists) {
-        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
+      // A non-quote payment must match a saved, enabled payment configuration.
+      if (!isQuoteMode) {
+        const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+        const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+        const methodsData = settingsDoc.exists ? (settingsDoc.data()?.methods || settingsDoc.data() || {}) : {};
         const methodConf = methodsData[normalizedMethodKey];
-        if (methodConf && methodConf.enabled === false) {
-          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
+        const legacyDefaultKey = ['bankily', 'sadad', 'gaza'].includes(normalizedMethodKey);
+        const methodEnabled = !!methodConf && (
+          typeof methodConf.enabled === 'boolean' ? methodConf.enabled : legacyDefaultKey
+        );
+        const gatewayReady = methodConf?.type !== 'electronic_gateway' || methodConf?.integrationStatus === 'operational';
+        if (!methodEnabled || !gatewayReady) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة أو غير مهيأة حالياً.' });
         }
       }
 
@@ -419,62 +437,115 @@ async function startServer() {
         }
       }
 
-      // 3. Duplicate active-order prevention (query by senderPhone, filter in memory to avoid multi-field index failures)
-      const existingQuery = await firestore.collection("orders")
-        .where("senderPhone", "==", cleanPhone)
-        .limit(10)
-        .get();
-
-      const hasDuplicate = existingQuery.docs.some(doc => {
-        const d = doc.data();
-        return d.serviceId === serviceId && d.status === "pending";
-      });
-
-      if (hasDuplicate) {
-        return res.status(409).json({ error: 'لديك طلب قيد الانتظار لنفس الخدمة بالفعل. يرجى الانتظار حتى اكتماله.' });
-      }
-
-      // 4. Generate cryptographically secure tracking secret token
-      const rawTrackingToken = crypto.randomBytes(16).toString("hex"); // 32 characters
+      // 3. Create the guest order and its idempotency record atomically.
+      // The raw tracking secret is returned to the same browser attempt; only
+      // its SHA-256 hash is ever stored in Firestore.
+      const rawTrackingToken = trackingToken;
       const hashedTrackingToken = crypto.createHash("sha256").update(rawTrackingToken).digest("hex");
-
-      const now = admin.firestore.Timestamp.now();
-      const newOrderRef = firestore.collection("orders").doc();
-      const orderData = {
-        id: newOrderRef.id,
-        userId: "guest",
-        isGuest: true,
-        userEmail: `guest_${cleanPhone}@mauritop.local`,
-        userName: `زائر (${cleanPhone})`,
+      const normalizedPaymentMethod = String(paymentMethod || '').toLowerCase();
+      const payloadHash = computeOrderPayloadHash({
+        senderPhone: cleanPhone,
         serviceId,
         serviceType: serviceType || sData.name || sData.title || serviceId,
-        serviceTitleAr: sData.titleAr || sData.nameAr || sData.title || sData.name || serviceId,
-        amount: verifiedAmount,
-        fee: 0,
-        total: verifiedAmount,
-        paymentMethod: paymentMethod || 'bankily',
-        senderPhone: cleanPhone,
+        paymentMethod: normalizedPaymentMethod,
         senderRef: senderRef || '',
         proofImageUrl: proofImageUrl || '',
-        proofUrl: proofImageUrl || '',
         accountDetails: accountDetails || '',
         fields: fields || {},
-        status: 'pending',
-        trackingTokenHash: hashedTrackingToken,
-        createdAt: now,
-        updatedAt: now
-      };
+        amount: verifiedAmount
+      });
 
-      await newOrderRef.set(orderData);
+      const idempotencyRef = firestore.collection("idempotency_keys").doc(`guest_${attemptId}`);
+      const newOrderRef = firestore.collection("orders").doc();
+      const now = admin.firestore.Timestamp.now();
+      let finalOrderId = newOrderRef.id;
+      let isRetry = false;
 
-      // Return rawTrackingToken once to the client for saving
-      return res.status(201).json({
+      await firestore.runTransaction(async (transaction) => {
+        const idempotencySnapshot = await transaction.get(idempotencyRef);
+        if (idempotencySnapshot.exists) {
+          const existingAttempt = idempotencySnapshot.data() || {};
+          if (existingAttempt.payloadHash !== payloadHash ||
+              existingAttempt.trackingTokenHash !== hashedTrackingToken) {
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          }
+
+          const existingOrderId = String(existingAttempt.orderId || "");
+          if (!existingOrderId) throw new Error("IDEMPOTENCY_ORDER_MISSING");
+          const existingOrderRef = firestore.collection("orders").doc(existingOrderId);
+          const existingOrderSnapshot = await transaction.get(existingOrderRef);
+          if (!existingOrderSnapshot.exists || existingOrderSnapshot.data()?.userId !== "guest") {
+            throw new Error("IDEMPOTENCY_ORDER_MISSING");
+          }
+
+          finalOrderId = existingOrderId;
+          isRetry = true;
+          return;
+        }
+
+        // The duplicate check is inside the same transaction so simultaneous
+        // requests for the same guest attempt cannot both create an order.
+        const existingQuery = firestore.collection("orders")
+          .where("senderPhone", "==", cleanPhone)
+          .limit(10);
+        const existingSnapshot = await transaction.get(existingQuery);
+        const hasDuplicate = existingSnapshot.docs.some((orderDoc) => {
+          const data = orderDoc.data();
+          return data.serviceId === serviceId && data.status === "pending";
+        });
+        if (hasDuplicate) throw new Error("DUPLICATE_ACTIVE_ORDER");
+
+        const orderData = {
+          id: newOrderRef.id,
+          userId: "guest",
+          isGuest: true,
+          userEmail: `guest_${cleanPhone}@mauritop.local`,
+          userName: `زائر (${cleanPhone})`,
+          serviceId,
+          serviceType: serviceType || sData.name || sData.title || serviceId,
+          serviceTitleAr: sData.titleAr || sData.nameAr || sData.title || sData.name || serviceId,
+          amount: verifiedAmount,
+          fee: 0,
+          total: verifiedAmount,
+          paymentMethod: normalizedPaymentMethod || 'bankily',
+          senderPhone: cleanPhone,
+          senderRef: senderRef || '',
+          proofImageUrl: proofImageUrl || '',
+          proofUrl: proofImageUrl || '',
+          accountDetails: accountDetails || '',
+          fields: fields || {},
+          status: 'pending',
+          trackingTokenHash: hashedTrackingToken,
+          payloadHash,
+          createdAt: now,
+          updatedAt: now
+        };
+
+        transaction.create(newOrderRef, orderData);
+        transaction.create(idempotencyRef, {
+          attemptId,
+          orderId: newOrderRef.id,
+          payloadHash,
+          trackingTokenHash: hashedTrackingToken,
+          createdAt: now
+        });
+      });
+
+      return res.status(isRetry ? 200 : 201).json({
         success: true,
-        orderId: newOrderRef.id,
+        orderId: finalOrderId,
         trackingToken: rawTrackingToken,
+        isRetry,
         message: 'تم تسجيل طلبك بنجاح. احتفظ برمز التتبع لمتابعة طلبك.'
       });
+
     } catch (err: any) {
+      if (err?.message === "DUPLICATE_ACTIVE_ORDER") {
+        return res.status(409).json({ error: 'لديك طلب قيد الانتظار لنفس الخدمة بالفعل. يرجى الانتظار حتى اكتماله.' });
+      }
+      if (err?.message === "IDEMPOTENCY_CONFLICT") {
+        return res.status(409).json({ error: 'تم استخدام محاولة الطلب نفسها ببيانات مختلفة. حدّث الصفحة وراجع حالة طلباتك قبل البدء من جديد.' });
+      }
       console.error("Guest order error:", err);
       return res.status(500).json({ error: 'تعذر معالجة الطلب حالياً. يرجى المحاولة لاحقاً.' });
     }
@@ -512,22 +583,33 @@ async function startServer() {
         return res.status(400).json({ error: 'هذه الخدمة غير متاحة للشراء حالياً أو تم إيقافها مؤقتاً.' });
       }
 
-      let verifiedAmount = Number(amount || 0);
+      const isQuoteMode = sData.pricingMode === "quote";
+      if ((String(paymentMethod || "").toLowerCase() === "quote") !== isQuoteMode) {
+        return res.status(400).json({ error: 'طريقة التسعير المرسلة لا تطابق إعدادات الخدمة.' });
+      }
+
+      let verifiedAmount = isQuoteMode ? 0 : Number(amount || 0);
       if (sData.pricingMode === "fixed") {
         verifiedAmount = Number(sData.priceMru || sData.price || 0);
       }
-
-      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
-      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
-      if (settingsDoc.exists) {
-        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
-        const methodConf = methodsData[normalizedMethodKey];
-        if (methodConf && methodConf.enabled === false) {
-          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
-        }
+      if (!isQuoteMode && (!Number.isFinite(verifiedAmount) || verifiedAmount <= 0)) {
+        return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
       }
 
-      const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
+      if (!isQuoteMode) {
+        const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+        const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+        const methodsData = settingsDoc.exists ? (settingsDoc.data()?.methods || settingsDoc.data() || {}) : {};
+        const methodConf = methodsData[normalizedMethodKey];
+        const legacyDefaultKey = ['bankily', 'sadad', 'gaza'].includes(normalizedMethodKey);
+        const methodEnabled = !!methodConf && (
+          typeof methodConf.enabled === 'boolean' ? methodConf.enabled : legacyDefaultKey
+        );
+        const gatewayReady = methodConf?.type !== 'electronic_gateway' || methodConf?.integrationStatus === 'operational';
+        if (!methodEnabled || !gatewayReady) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة أو غير مهيأة حالياً.' });
+        }
+      }
       if (!isQuoteMode && ['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
         if (!proofImageUrl || typeof proofImageUrl !== 'string') {
           return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
