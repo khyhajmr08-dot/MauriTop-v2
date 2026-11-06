@@ -14,7 +14,8 @@ import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, res
 
 import firebaseConfig from "./firebase-applet-config.json";
 
-async function startServer() {
+async function startServer(options: { serverless?: boolean } = {}): Promise<express.Express> {
+  const serverless = options.serverless === true;
   let adminApp: admin.App | undefined;
   try {
     adminApp = admin.initializeApp({
@@ -200,10 +201,12 @@ async function startServer() {
     }
   };
 
-  const server = createServer(app);
-  const wss = new WebSocketServer({ server, path: '/live', maxPayload: 64 * 1024 });
+  // Vercel handles HTTP requests through a serverless Express function.
+  // Keep the standalone HTTP/WebSocket server only for local development.
+  const server = serverless ? null : createServer(app);
+  const wss = server ? new WebSocketServer({ server, path: '/live', maxPayload: 64 * 1024 }) : null;
   const liveSessionCounts = new Map<string, number>();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   
   // Lazy init Gemini client to avoid crashes if API_KEY is missing
   let ai: GoogleGenAI | null = null;
@@ -1241,128 +1244,156 @@ async function startServer() {
   // Authenticate before opening a billable Gemini Live session. The first
   // WebSocket message must be { type: "auth", token: <Firebase ID token> }.
   // The client should wait for { authenticated: true, ready: true } before audio.
-  wss.on("connection", (clientWs) => {
-    let authenticatedUid: string | null = null;
-    let liveSession: any = null;
-    let closed = false;
-    let authStarted = false;
-    let frameWindowStart = Date.now();
-    let frameCount = 0;
-
-    const authTimer = setTimeout(() => closeSocket(4401, 'Authentication required'), 5000);
-    const closeSocket = (code: number, message: string) => {
-      if (clientWs.readyState === 0 || clientWs.readyState === 1) {
-        clientWs.close(code, message.slice(0, 120));
-      }
-    };
-    const cleanup = () => {
-      closed = true;
-      clearTimeout(authTimer);
-      if (authenticatedUid) {
-        const count = liveSessionCounts.get(authenticatedUid) || 0;
-        if (count <= 1) liveSessionCounts.delete(authenticatedUid);
-        else liveSessionCounts.set(authenticatedUid, count - 1);
-        authenticatedUid = null;
-      }
-      try { liveSession?.close(); } catch { /* best-effort session cleanup */ }
-      liveSession = null;
-    };
-
-    clientWs.once('close', cleanup);
-    clientWs.once('error', cleanup);
-    clientWs.once('message', async (rawData) => {
-      if (authStarted) return;
-      authStarted = true;
-      try {
-        if (!adminApp) {
-          closeSocket(1011, 'Authentication service unavailable');
-          return;
+  if (wss) {
+    wss.on("connection", (clientWs) => {
+      let authenticatedUid: string | null = null;
+      let liveSession: any = null;
+      let closed = false;
+      let authStarted = false;
+      let frameWindowStart = Date.now();
+      let frameCount = 0;
+  
+      const authTimer = setTimeout(() => closeSocket(4401, 'Authentication required'), 5000);
+      const closeSocket = (code: number, message: string) => {
+        if (clientWs.readyState === 0 || clientWs.readyState === 1) {
+          clientWs.close(code, message.slice(0, 120));
         }
-        const message = JSON.parse(rawData.toString());
-        if (message?.type !== 'auth' || typeof message.token !== 'string' || message.token.length > 8192) {
-          closeSocket(4401, 'Authentication required');
-          return;
-        }
-        const decoded = await getAuth(adminApp).verifyIdToken(message.token);
-        if (closed || clientWs.readyState !== 1) return;
-        const currentCount = liveSessionCounts.get(decoded.uid) || 0;
-        if (currentCount >= 2) {
-          closeSocket(4429, 'Too many active voice sessions');
-          return;
-        }
-        authenticatedUid = decoded.uid;
-        liveSessionCounts.set(authenticatedUid, currentCount + 1);
+      };
+      const cleanup = () => {
+        closed = true;
         clearTimeout(authTimer);
-
-        liveSession = await getAi().live.connect({
-          model: 'gemini-3.8-live',
-          callbacks: {
-            onmessage: (message: any) => {
-              if (clientWs.readyState !== 1) return;
-              const audioParts = message.serverContent?.modelTurn?.parts || [];
-              for (const part of audioParts) {
-                if (part.inlineData?.data) {
-                  clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
-                }
-              }
-              if (message.serverContent?.interrupted) {
-                clientWs.send(JSON.stringify({ interrupted: true }));
-              }
-            },
-          },
-          config: {
-            responseModalities: ['AUDIO' as any],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-            systemInstruction: "أنت المساعد الرقمي لمنصة 'موري توب' (Mouri Top). ساعد المستخدمين بوضوح وود في استفساراتهم المتعلقة بالخدمات الرقمية وشحن الألعاب. وسائل الدفع المتاحة حالياً هي بنكيلي وسداد فقط؛ PayPal غير متاح بعد.",
-          },
-        });
-
-        if (closed || clientWs.readyState !== 1) {
-          cleanup();
-          return;
+        if (authenticatedUid) {
+          const count = liveSessionCounts.get(authenticatedUid) || 0;
+          if (count <= 1) liveSessionCounts.delete(authenticatedUid);
+          else liveSessionCounts.set(authenticatedUid, count - 1);
+          authenticatedUid = null;
         }
-        clientWs.send(JSON.stringify({ authenticated: true, ready: true }));
-
-        clientWs.on('message', (data: any) => {
-          try {
-            const now = Date.now();
-            if (now - frameWindowStart >= 10_000) {
-              frameWindowStart = now;
-              frameCount = 0;
-            }
-            frameCount += 1;
-            if (frameCount > 240) {
-              closeSocket(4429, 'Audio message rate exceeded');
-              cleanup();
-              return;
-            }
-            const audioMessage = JSON.parse(data.toString());
-            if (typeof audioMessage?.audio !== 'string' || audioMessage.audio.length > 48_000) return;
-            liveSession?.sendRealtimeInput({ audio: { data: audioMessage.audio, mimeType: 'audio/pcm;rate=16000' } });
-          } catch {
-            // Ignore malformed client frames without logging audio or token data.
+        try { liveSession?.close(); } catch { /* best-effort session cleanup */ }
+        liveSession = null;
+      };
+  
+      clientWs.once('close', cleanup);
+      clientWs.once('error', cleanup);
+      clientWs.once('message', async (rawData) => {
+        if (authStarted) return;
+        authStarted = true;
+        try {
+          if (!adminApp) {
+            closeSocket(1011, 'Authentication service unavailable');
+            return;
           }
-        });
-      } catch {
-        closeSocket(4401, 'Invalid authentication or session setup failed');
-      }
+          const message = JSON.parse(rawData.toString());
+          if (message?.type !== 'auth' || typeof message.token !== 'string' || message.token.length > 8192) {
+            closeSocket(4401, 'Authentication required');
+            return;
+          }
+          const decoded = await getAuth(adminApp).verifyIdToken(message.token);
+          if (closed || clientWs.readyState !== 1) return;
+          const currentCount = liveSessionCounts.get(decoded.uid) || 0;
+          if (currentCount >= 2) {
+            closeSocket(4429, 'Too many active voice sessions');
+            return;
+          }
+          authenticatedUid = decoded.uid;
+          liveSessionCounts.set(authenticatedUid, currentCount + 1);
+          clearTimeout(authTimer);
+  
+          liveSession = await getAi().live.connect({
+            model: 'gemini-3.8-live',
+            callbacks: {
+              onmessage: (message: any) => {
+                if (clientWs.readyState !== 1) return;
+                const audioParts = message.serverContent?.modelTurn?.parts || [];
+                for (const part of audioParts) {
+                  if (part.inlineData?.data) {
+                    clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
+                  }
+                }
+                if (message.serverContent?.interrupted) {
+                  clientWs.send(JSON.stringify({ interrupted: true }));
+                }
+              },
+            },
+            config: {
+              responseModalities: ['AUDIO' as any],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
+              systemInstruction: "أنت المساعد الرقمي لمنصة 'موري توب' (Mouri Top). ساعد المستخدمين بوضوح وود في استفساراتهم المتعلقة بالخدمات الرقمية وشحن الألعاب. وسائل الدفع المتاحة حالياً هي بنكيلي وسداد فقط؛ PayPal غير متاح بعد.",
+            },
+          });
+  
+          if (closed || clientWs.readyState !== 1) {
+            cleanup();
+            return;
+          }
+          clientWs.send(JSON.stringify({ authenticated: true, ready: true }));
+  
+          clientWs.on('message', (data: any) => {
+            try {
+              const now = Date.now();
+              if (now - frameWindowStart >= 10_000) {
+                frameWindowStart = now;
+                frameCount = 0;
+              }
+              frameCount += 1;
+              if (frameCount > 240) {
+                closeSocket(4429, 'Audio message rate exceeded');
+                cleanup();
+                return;
+              }
+              const audioMessage = JSON.parse(data.toString());
+              if (typeof audioMessage?.audio !== 'string' || audioMessage.audio.length > 48_000) return;
+              liveSession?.sendRealtimeInput({ audio: { data: audioMessage.audio, mimeType: 'audio/pcm;rate=16000' } });
+            } catch {
+              // Ignore malformed client frames without logging audio or token data.
+            }
+          });
+        } catch {
+          closeSocket(4401, 'Invalid authentication or session setup failed');
+        }
+      });
     });
-  });
-
-  // Vite middleware
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ 
-      server: { middlewareMode: true, hmr: false }, 
-      appType: "spa" 
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  server.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
+  if (!serverless) {
+    // Vite middleware / static SPA serving is used by the standalone local server.
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*all', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    }
+
+    server?.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
+  }
+
+  return app;
 }
 
-startServer();
+// Vercel's /api/[...path] function imports this Express application. Initialize
+// the route table once per warm function instance and reuse it for later calls.
+let vercelAppPromise: Promise<express.Express> | null = null;
+const vercelApp = express();
+vercelApp.use((req, res, next) => {
+  if (!vercelAppPromise) {
+    vercelAppPromise = startServer({ serverless: true });
+  }
+  vercelAppPromise
+    .then((application) => application(req, res, next))
+    .catch(next);
+});
+
+export default vercelApp;
+
+// Preserve the current local development workflow: npm run dev starts the
+// Vite middleware server and its optional /live WebSocket endpoint.
+if (process.env.VERCEL !== "1") {
+  void startServer().catch((error) => {
+    console.error("Failed to start MauriTop server:", error);
+    process.exitCode = 1;
+  });
+}
