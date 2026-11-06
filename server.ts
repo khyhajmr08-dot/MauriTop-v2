@@ -18,11 +18,25 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
   const serverless = options.serverless === true;
   let adminApp: admin.App | undefined;
   try {
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+
+    // Vercel does not inherit Google Cloud Application Default Credentials.
+    // Production must receive the service-account JSON through a protected
+    // environment variable; never commit the private key to this repository.
+    if (process.env.VERCEL === "1" && !serviceAccountJson) {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is required for Firebase Admin on Vercel.");
+    }
+
+    const credential = serviceAccountJson
+      ? admin.credential.cert(JSON.parse(serviceAccountJson))
+      : undefined;
+
     adminApp = admin.initializeApp({
-      projectId: firebaseConfig.projectId
+      projectId: firebaseConfig.projectId,
+      ...(credential ? { credential } : {})
     });
   } catch (e) {
-    console.warn("Firebase Admin not initialized", e);
+    console.error("Firebase Admin not initialized:", e);
   }
 
   let db: Firestore | null = null;
