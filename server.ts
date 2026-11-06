@@ -167,7 +167,10 @@ async function startServer() {
       next();
     } catch (err) {
       console.error("Maintenance check error:", err);
-      next();
+      return res.status(503).json({
+        code: 'MAINTENANCE_STATUS_UNAVAILABLE',
+        error: 'تعذر التحقق من حالة المنصة حالياً. لم يتم قبول الطلب؛ يرجى المحاولة لاحقاً.'
+      });
     }
   };
 
@@ -407,14 +410,19 @@ async function startServer() {
         return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
       }
 
-      // Verify payment method in Firestore settings
-      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
-      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
-      if (settingsDoc.exists) {
-        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
+      // A non-quote payment must match a saved, enabled payment configuration.
+      if (!isQuoteMode) {
+        const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+        const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+        const methodsData = settingsDoc.exists ? (settingsDoc.data()?.methods || settingsDoc.data() || {}) : {};
         const methodConf = methodsData[normalizedMethodKey];
-        if (methodConf && methodConf.enabled === false) {
-          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
+        const legacyDefaultKey = ['bankily', 'sadad', 'gaza'].includes(normalizedMethodKey);
+        const methodEnabled = !!methodConf && (
+          typeof methodConf.enabled === 'boolean' ? methodConf.enabled : legacyDefaultKey
+        );
+        const gatewayReady = methodConf?.type !== 'electronic_gateway' || methodConf?.integrationStatus === 'operational';
+        if (!methodEnabled || !gatewayReady) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة أو غير مهيأة حالياً.' });
         }
       }
 
@@ -575,22 +583,33 @@ async function startServer() {
         return res.status(400).json({ error: 'هذه الخدمة غير متاحة للشراء حالياً أو تم إيقافها مؤقتاً.' });
       }
 
-      let verifiedAmount = Number(amount || 0);
+      const isQuoteMode = sData.pricingMode === "quote";
+      if ((String(paymentMethod || "").toLowerCase() === "quote") !== isQuoteMode) {
+        return res.status(400).json({ error: 'طريقة التسعير المرسلة لا تطابق إعدادات الخدمة.' });
+      }
+
+      let verifiedAmount = isQuoteMode ? 0 : Number(amount || 0);
       if (sData.pricingMode === "fixed") {
         verifiedAmount = Number(sData.priceMru || sData.price || 0);
       }
-
-      const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
-      const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
-      if (settingsDoc.exists) {
-        const methodsData = settingsDoc.data()?.methods || settingsDoc.data() || {};
-        const methodConf = methodsData[normalizedMethodKey];
-        if (methodConf && methodConf.enabled === false) {
-          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة حالياً.' });
-        }
+      if (!isQuoteMode && (!Number.isFinite(verifiedAmount) || verifiedAmount <= 0)) {
+        return res.status(400).json({ error: 'مبلغ الطلب غير صالح.' });
       }
 
-      const isQuoteMode = sData.pricingMode === "quote" || paymentMethod === "quote";
+      if (!isQuoteMode) {
+        const normalizedMethodKey = String(paymentMethod || '').toLowerCase() === 'gazapay' ? 'gaza' : String(paymentMethod || '').toLowerCase();
+        const settingsDoc = await firestore.collection("settings").doc("payment_methods").get();
+        const methodsData = settingsDoc.exists ? (settingsDoc.data()?.methods || settingsDoc.data() || {}) : {};
+        const methodConf = methodsData[normalizedMethodKey];
+        const legacyDefaultKey = ['bankily', 'sadad', 'gaza'].includes(normalizedMethodKey);
+        const methodEnabled = !!methodConf && (
+          typeof methodConf.enabled === 'boolean' ? methodConf.enabled : legacyDefaultKey
+        );
+        const gatewayReady = methodConf?.type !== 'electronic_gateway' || methodConf?.integrationStatus === 'operational';
+        if (!methodEnabled || !gatewayReady) {
+          return res.status(400).json({ error: 'طريقة الدفع المختارة غير متوفرة أو غير مهيأة حالياً.' });
+        }
+      }
       if (!isQuoteMode && ['bankily', 'sadad', 'gaza', 'gazapay'].includes(String(paymentMethod).toLowerCase())) {
         if (!proofImageUrl || typeof proofImageUrl !== 'string') {
           return res.status(400).json({ error: 'يرجى إرفاق إيصال الدفع لإتمام الطلب.' });
