@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import { GoogleGenAI } from "@google/genai";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getFirestore, Firestore, Timestamp } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
@@ -339,7 +339,7 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
       await targetUserRef.update({
         staffRole: role,
         role: role,
-        updatedAt: admin.firestore.Timestamp.now()
+        updatedAt: Timestamp.now()
       });
 
       // Audit log entry
@@ -348,7 +348,7 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
         targetUid,
         assignedRole: role,
         performedBy: (req as any).user?.uid || 'owner',
-        timestamp: admin.firestore.Timestamp.now()
+        timestamp: Timestamp.now()
       });
 
       return res.json({ success: true, message: `تم تعيين الدور بنجاح إلى ${role}` });
@@ -460,7 +460,7 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
 
       const idempotencyRef = firestore.collection("idempotency_keys").doc(`guest_${attemptId}`);
       const newOrderRef = firestore.collection("orders").doc();
-      const now = admin.firestore.Timestamp.now();
+      const now = Timestamp.now();
       let finalOrderId = newOrderRef.id;
       let isRetry = false;
 
@@ -644,7 +644,7 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
         ? firestore.collection("idempotency_keys").doc(`${user.uid}_${idempotencyKey.trim()}`)
         : null;
 
-      const now = admin.firestore.Timestamp.now();
+      const now = Timestamp.now();
       let isRetry = false;
       let finalOrderId = targetOrderId;
 
@@ -825,7 +825,7 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
           throw new Error("رصيدك الحالي غير كافٍ لإتمام السحب");
         }
 
-        const now = admin.firestore.Timestamp.now();
+        const now = Timestamp.now();
         tx.update(userRef, {
           loyaltyPoints: currentPoints - numAmount,
           points: currentPoints - numAmount,
@@ -1221,8 +1221,12 @@ async function startServer(options: { serverless?: boolean } = {}): Promise<expr
   // Admin API: Update conversation status and internal staff notes
   app.patch("/api/admin/ai-conversations/:id", requireOwner, async (req, res) => {
     try {
-      const { id } = req.params;
+      const rawId = req.params.id;
+      const id = Array.isArray(rawId) ? rawId[0] : rawId;
       const { status, internalNotes } = req.body || {};
+      if (typeof id !== "string" || !id.trim()) {
+        return res.status(400).json({ error: "Conversation ID is required." });
+      }
 
       const updateData: any = { updatedAt: new Date().toISOString() };
       if (status && ["open", "resolved", "escalated"].includes(status)) {
