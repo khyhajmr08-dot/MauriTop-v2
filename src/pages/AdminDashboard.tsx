@@ -67,6 +67,45 @@ import { LiveVisitorsDashboard } from "../components/admin/LiveVisitorsDashboard
 import SEO from "../components/SEO";
 import { Bot } from "lucide-react";
 
+const STAFF_ROLE_OPTIONS = [
+  { value: "user", label: "مستخدم عادي" },
+  { value: "support", label: "الدعم الفني" },
+  { value: "orders", label: "إدارة الطلبات" },
+  { value: "finance", label: "الإدارة المالية" },
+  { value: "catalog", label: "إدارة الكتالوج" },
+  { value: "content", label: "إدارة المحتوى" },
+  { value: "analytics", label: "التحليلات والتقارير" }
+] as const;
+
+type ManagedStaffRole = (typeof STAFF_ROLE_OPTIONS)[number]["value"];
+
+function getStaffRoleLabel(user: any): string {
+  if (user?.role === "admin") return "مدير عام 👑";
+  const labels: Record<string, string> = {
+    user: "مستخدم",
+    support: "الدعم الفني 🎧",
+    orders: "إدارة الطلبات 📦",
+    finance: "الإدارة المالية 💰",
+    catalog: "الكتالوج 🛍️",
+    content: "إدارة المحتوى ✍️",
+    analytics: "التحليلات 📊"
+  };
+  return labels[user?.staffRole || user?.role] || "مستخدم";
+}
+
+function getStaffRoleBadgeClass(user: any): string {
+  if (user?.role === "admin") return "bg-purple-50 text-purple-700 border-purple-200";
+  const classes: Record<string, string> = {
+    support: "bg-cyan-50 text-cyan-700 border-cyan-200",
+    orders: "bg-blue-50 text-blue-700 border-blue-200",
+    finance: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    catalog: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    content: "bg-amber-50 text-amber-700 border-amber-200",
+    analytics: "bg-violet-50 text-violet-700 border-violet-200"
+  };
+  return classes[user?.staffRole || user?.role] || "bg-slate-100 text-slate-600 border-slate-200";
+}
+
 // Lazy loaded sub-components to keep dashboard clean
 const ServicesManager = React.lazy(() => import("./ServicesManager"));
 const PostsAdmin = React.lazy(() => import("../components/PostsAdmin"));
@@ -528,22 +567,36 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSetStaffRole = async (targetUser: any, newRole: 'support' | 'finance' | 'user') => {
+  const handleSetStaffRole = async (targetUser: any, newRole: ManagedStaffRole) => {
     if (!targetUser) return;
-    if (targetUser.id === user?.uid) {
-      showToast("لا يمكن تعديل رتبة حساب المالك من لوحة الموظفين", "info");
+    if (targetUser.id === user?.uid || targetUser.role === "admin") {
+      showToast("لا يمكن تغيير رتبة حساب المالك من هنا", "info");
       return;
     }
+
     try {
       setRoleActionUserId(targetUser.id);
-      await updateDoc(doc(db, "users", targetUser.id), {
-        staffRole: newRole === 'user' ? null : newRole,
-        role: newRole === 'user' ? 'user' : 'staff',
-        updatedAt: serverTimestamp()
+      const idToken = await user?.getIdToken();
+      if (!idToken) throw new Error("تعذر التحقق من جلسة المالك. أعد تسجيل الدخول.");
+
+      const response = await fetch("/api/admin/set-role", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ targetUid: targetUser.id, role: newRole })
       });
-      setUsersList(prev => prev.map(u => u.id === targetUser.id ? { ...u, staffRole: newRole === 'user' ? null : newRole, role: newRole === 'user' ? 'user' : 'staff' } : u));
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.error || "رفض الخادم تحديث رتبة المستخدم.");
+      }
+
+      setUsersList(prev => prev.map(u =>
+        u.id === targetUser.id ? { ...u, staffRole: newRole, role: newRole } : u
+      ));
       cacheService.remove("admin_users");
-      const roleLabel = newRole === 'support' ? "موظف دعم فني" : newRole === 'finance' ? "موظف مالية ومحاسبة" : "مستخدم عادي";
+      const roleLabel = STAFF_ROLE_OPTIONS.find(option => option.value === newRole)?.label || newRole;
       showToast(`تم تحديث رتبة "${targetUser.name || 'المستخدم'}" إلى: ${roleLabel}`, "success");
     } catch (err: any) {
       console.error("Staff role update error:", err);
@@ -1902,14 +1955,9 @@ export default function AdminDashboard() {
                                     <div className="flex items-center gap-1.5">
                                       <span className={cn(
                                         "text-[10px] font-black px-3 py-1 rounded-full border",
-                                        u.staffRole === 'support' ? "bg-cyan-50 text-cyan-700 border-cyan-200" :
-                                        u.staffRole === 'finance' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                                        u.role === 'admin' ? "bg-purple-50 text-purple-700 border-purple-200" :
-                                        "bg-slate-100 text-slate-600 border-slate-200"
+                                        getStaffRoleBadgeClass(u)
                                       )}>
-                                        {u.staffRole === 'support' ? 'دعم فني 🎧' :
-                                         u.staffRole === 'finance' ? 'مالية 💰' :
-                                         u.role === 'admin' ? 'مدير عام 👑' : 'مستخدم'}
+                                        {getStaffRoleLabel(u)}
                                       </span>
                                     </div>
                                   </td>
@@ -1953,14 +2001,16 @@ export default function AdminDashboard() {
 
                                       {/* Staff Role Selector */}
                                       <select
-                                        value={u.staffRole || (u.role === 'admin' ? 'admin' : 'user')}
-                                        onChange={(e) => handleSetStaffRole(u, e.target.value as any)}
-                                        disabled={roleActionUserId === u.id || u.id === user?.uid}
-                                        className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500"
+                                        value={u.role === "admin" ? "owner" : (u.staffRole || u.role || "user")}
+                                        onChange={(e) => handleSetStaffRole(u, e.target.value as ManagedStaffRole)}
+                                        disabled={roleActionUserId === u.id || u.id === user?.uid || u.role === "admin"}
+                                        aria-label={`تغيير صلاحية ${u.name || u.email || u.id}`}
+                                        className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500 disabled:opacity-50"
                                       >
-                                        <option value="user">مستخدم عادي</option>
-                                        <option value="support">موظف دعم فني</option>
-                                        <option value="finance">موظف مالية</option>
+                                        {u.role === "admin" && <option value="owner">مدير عام</option>}
+                                        {STAFF_ROLE_OPTIONS.map(option => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
                                       </select>
 
                                       <button 
@@ -2057,14 +2107,16 @@ export default function AdminDashboard() {
 
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <select
-                                  value={u.staffRole || (u.role === 'admin' ? 'admin' : 'user')}
-                                  onChange={(e) => handleSetStaffRole(u, e.target.value as any)}
-                                  disabled={roleActionUserId === u.id || u.id === user?.uid}
-                                  className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500"
+                                  value={u.role === "admin" ? "owner" : (u.staffRole || u.role || "user")}
+                                  onChange={(e) => handleSetStaffRole(u, e.target.value as ManagedStaffRole)}
+                                  disabled={roleActionUserId === u.id || u.id === user?.uid || u.role === "admin"}
+                                  aria-label={`تغيير صلاحية ${u.name || u.email || u.id}`}
+                                  className="text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-cyan-500 disabled:opacity-50"
                                 >
-                                  <option value="user">مستخدم عادي</option>
-                                  <option value="support">دعم فني</option>
-                                  <option value="finance">مالية</option>
+                                  {u.role === "admin" && <option value="owner">مدير عام</option>}
+                                  {STAFF_ROLE_OPTIONS.map(option => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
                                 </select>
 
                                 {userPhone && (
