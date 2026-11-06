@@ -1,5 +1,5 @@
 import express from "express";
-import application from "../server";
+import application from "../server.ts";
 
 // Vercel catch-all route for every /api/* request. Depending on the route
 // adapter, req.url may contain the full /api prefix or only the remainder.
