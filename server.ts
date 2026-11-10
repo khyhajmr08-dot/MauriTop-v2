@@ -4,24 +4,39 @@ import { WebSocketServer } from "ws";
 import { GoogleGenAI } from "@google/genai";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getFirestore, Firestore, Timestamp } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 import { getAuth } from "firebase-admin/auth";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import crypto from "crypto";
-import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation";
+import { isValidMauritanianPhone, isServicePurchasable, validateIndexNowUrl, resolveCanonicalUrl, computeOrderPayloadHash } from "./src/lib/orderValidation.ts";
 
-import firebaseConfig from "./firebase-applet-config.json";
+import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
-async function startServer() {
+async function startServer(options: { serverless?: boolean } = {}): Promise<express.Express> {
+  const serverless = options.serverless === true;
   let adminApp: admin.App | undefined;
   try {
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+
+    // Vercel does not inherit Google Cloud Application Default Credentials.
+    // Production must receive the service-account JSON through a protected
+    // environment variable; never commit the private key to this repository.
+    if (process.env.VERCEL === "1" && !serviceAccountJson) {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is required for Firebase Admin on Vercel.");
+    }
+
+    const credential = serviceAccountJson
+      ? admin.credential.cert(JSON.parse(serviceAccountJson))
+      : undefined;
+
     adminApp = admin.initializeApp({
-      projectId: firebaseConfig.projectId
+      projectId: firebaseConfig.projectId,
+      ...(credential ? { credential } : {})
     });
   } catch (e) {
-    console.warn("Firebase Admin not initialized", e);
+    console.error("Firebase Admin not initialized:", e);
   }
 
   let db: Firestore | null = null;
@@ -200,10 +215,12 @@ async function startServer() {
     }
   };
 
-  const server = createServer(app);
-  const wss = new WebSocketServer({ server, path: '/live', maxPayload: 64 * 1024 });
+  // Vercel handles HTTP requests through a serverless Express function.
+  // Keep the standalone HTTP/WebSocket server only for local development.
+  const server = serverless ? null : createServer(app);
+  const wss = server ? new WebSocketServer({ server, path: '/live', maxPayload: 64 * 1024 }) : null;
   const liveSessionCounts = new Map<string, number>();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   
   // Lazy init Gemini client to avoid crashes if API_KEY is missing
   let ai: GoogleGenAI | null = null;
@@ -336,7 +353,7 @@ async function startServer() {
       await targetUserRef.update({
         staffRole: role,
         role: role,
-        updatedAt: admin.firestore.Timestamp.now()
+        updatedAt: Timestamp.now()
       });
 
       // Audit log entry
@@ -345,7 +362,7 @@ async function startServer() {
         targetUid,
         assignedRole: role,
         performedBy: (req as any).user?.uid || 'owner',
-        timestamp: admin.firestore.Timestamp.now()
+        timestamp: Timestamp.now()
       });
 
       return res.json({ success: true, message: `تم تعيين الدور بنجاح إلى ${role}` });
@@ -457,7 +474,7 @@ async function startServer() {
 
       const idempotencyRef = firestore.collection("idempotency_keys").doc(`guest_${attemptId}`);
       const newOrderRef = firestore.collection("orders").doc();
-      const now = admin.firestore.Timestamp.now();
+      const now = Timestamp.now();
       let finalOrderId = newOrderRef.id;
       let isRetry = false;
 
@@ -641,7 +658,7 @@ async function startServer() {
         ? firestore.collection("idempotency_keys").doc(`${user.uid}_${idempotencyKey.trim()}`)
         : null;
 
-      const now = admin.firestore.Timestamp.now();
+      const now = Timestamp.now();
       let isRetry = false;
       let finalOrderId = targetOrderId;
 
@@ -822,7 +839,7 @@ async function startServer() {
           throw new Error("رصيدك الحالي غير كافٍ لإتمام السحب");
         }
 
-        const now = admin.firestore.Timestamp.now();
+        const now = Timestamp.now();
         tx.update(userRef, {
           loyaltyPoints: currentPoints - numAmount,
           points: currentPoints - numAmount,
@@ -1218,8 +1235,12 @@ async function startServer() {
   // Admin API: Update conversation status and internal staff notes
   app.patch("/api/admin/ai-conversations/:id", requireOwner, async (req, res) => {
     try {
-      const { id } = req.params;
+      const rawId = req.params.id;
+      const id = Array.isArray(rawId) ? rawId[0] : rawId;
       const { status, internalNotes } = req.body || {};
+      if (typeof id !== "string" || !id.trim()) {
+        return res.status(400).json({ error: "Conversation ID is required." });
+      }
 
       const updateData: any = { updatedAt: new Date().toISOString() };
       if (status && ["open", "resolved", "escalated"].includes(status)) {
@@ -1241,128 +1262,156 @@ async function startServer() {
   // Authenticate before opening a billable Gemini Live session. The first
   // WebSocket message must be { type: "auth", token: <Firebase ID token> }.
   // The client should wait for { authenticated: true, ready: true } before audio.
-  wss.on("connection", (clientWs) => {
-    let authenticatedUid: string | null = null;
-    let liveSession: any = null;
-    let closed = false;
-    let authStarted = false;
-    let frameWindowStart = Date.now();
-    let frameCount = 0;
-
-    const authTimer = setTimeout(() => closeSocket(4401, 'Authentication required'), 5000);
-    const closeSocket = (code: number, message: string) => {
-      if (clientWs.readyState === 0 || clientWs.readyState === 1) {
-        clientWs.close(code, message.slice(0, 120));
-      }
-    };
-    const cleanup = () => {
-      closed = true;
-      clearTimeout(authTimer);
-      if (authenticatedUid) {
-        const count = liveSessionCounts.get(authenticatedUid) || 0;
-        if (count <= 1) liveSessionCounts.delete(authenticatedUid);
-        else liveSessionCounts.set(authenticatedUid, count - 1);
-        authenticatedUid = null;
-      }
-      try { liveSession?.close(); } catch { /* best-effort session cleanup */ }
-      liveSession = null;
-    };
-
-    clientWs.once('close', cleanup);
-    clientWs.once('error', cleanup);
-    clientWs.once('message', async (rawData) => {
-      if (authStarted) return;
-      authStarted = true;
-      try {
-        if (!adminApp) {
-          closeSocket(1011, 'Authentication service unavailable');
-          return;
+  if (wss) {
+    wss.on("connection", (clientWs) => {
+      let authenticatedUid: string | null = null;
+      let liveSession: any = null;
+      let closed = false;
+      let authStarted = false;
+      let frameWindowStart = Date.now();
+      let frameCount = 0;
+  
+      const authTimer = setTimeout(() => closeSocket(4401, 'Authentication required'), 5000);
+      const closeSocket = (code: number, message: string) => {
+        if (clientWs.readyState === 0 || clientWs.readyState === 1) {
+          clientWs.close(code, message.slice(0, 120));
         }
-        const message = JSON.parse(rawData.toString());
-        if (message?.type !== 'auth' || typeof message.token !== 'string' || message.token.length > 8192) {
-          closeSocket(4401, 'Authentication required');
-          return;
-        }
-        const decoded = await getAuth(adminApp).verifyIdToken(message.token);
-        if (closed || clientWs.readyState !== 1) return;
-        const currentCount = liveSessionCounts.get(decoded.uid) || 0;
-        if (currentCount >= 2) {
-          closeSocket(4429, 'Too many active voice sessions');
-          return;
-        }
-        authenticatedUid = decoded.uid;
-        liveSessionCounts.set(authenticatedUid, currentCount + 1);
+      };
+      const cleanup = () => {
+        closed = true;
         clearTimeout(authTimer);
-
-        liveSession = await getAi().live.connect({
-          model: 'gemini-3.8-live',
-          callbacks: {
-            onmessage: (message: any) => {
-              if (clientWs.readyState !== 1) return;
-              const audioParts = message.serverContent?.modelTurn?.parts || [];
-              for (const part of audioParts) {
-                if (part.inlineData?.data) {
-                  clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
-                }
-              }
-              if (message.serverContent?.interrupted) {
-                clientWs.send(JSON.stringify({ interrupted: true }));
-              }
-            },
-          },
-          config: {
-            responseModalities: ['AUDIO' as any],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-            systemInstruction: "أنت المساعد الرقمي لمنصة 'موري توب' (Mouri Top). ساعد المستخدمين بوضوح وود في استفساراتهم المتعلقة بالخدمات الرقمية وشحن الألعاب. وسائل الدفع المتاحة حالياً هي بنكيلي وسداد فقط؛ PayPal غير متاح بعد.",
-          },
-        });
-
-        if (closed || clientWs.readyState !== 1) {
-          cleanup();
-          return;
+        if (authenticatedUid) {
+          const count = liveSessionCounts.get(authenticatedUid) || 0;
+          if (count <= 1) liveSessionCounts.delete(authenticatedUid);
+          else liveSessionCounts.set(authenticatedUid, count - 1);
+          authenticatedUid = null;
         }
-        clientWs.send(JSON.stringify({ authenticated: true, ready: true }));
-
-        clientWs.on('message', (data: any) => {
-          try {
-            const now = Date.now();
-            if (now - frameWindowStart >= 10_000) {
-              frameWindowStart = now;
-              frameCount = 0;
-            }
-            frameCount += 1;
-            if (frameCount > 240) {
-              closeSocket(4429, 'Audio message rate exceeded');
-              cleanup();
-              return;
-            }
-            const audioMessage = JSON.parse(data.toString());
-            if (typeof audioMessage?.audio !== 'string' || audioMessage.audio.length > 48_000) return;
-            liveSession?.sendRealtimeInput({ audio: { data: audioMessage.audio, mimeType: 'audio/pcm;rate=16000' } });
-          } catch {
-            // Ignore malformed client frames without logging audio or token data.
+        try { liveSession?.close(); } catch { /* best-effort session cleanup */ }
+        liveSession = null;
+      };
+  
+      clientWs.once('close', cleanup);
+      clientWs.once('error', cleanup);
+      clientWs.once('message', async (rawData) => {
+        if (authStarted) return;
+        authStarted = true;
+        try {
+          if (!adminApp) {
+            closeSocket(1011, 'Authentication service unavailable');
+            return;
           }
-        });
-      } catch {
-        closeSocket(4401, 'Invalid authentication or session setup failed');
-      }
+          const message = JSON.parse(rawData.toString());
+          if (message?.type !== 'auth' || typeof message.token !== 'string' || message.token.length > 8192) {
+            closeSocket(4401, 'Authentication required');
+            return;
+          }
+          const decoded = await getAuth(adminApp).verifyIdToken(message.token);
+          if (closed || clientWs.readyState !== 1) return;
+          const currentCount = liveSessionCounts.get(decoded.uid) || 0;
+          if (currentCount >= 2) {
+            closeSocket(4429, 'Too many active voice sessions');
+            return;
+          }
+          authenticatedUid = decoded.uid;
+          liveSessionCounts.set(authenticatedUid, currentCount + 1);
+          clearTimeout(authTimer);
+  
+          liveSession = await getAi().live.connect({
+            model: 'gemini-3.8-live',
+            callbacks: {
+              onmessage: (message: any) => {
+                if (clientWs.readyState !== 1) return;
+                const audioParts = message.serverContent?.modelTurn?.parts || [];
+                for (const part of audioParts) {
+                  if (part.inlineData?.data) {
+                    clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
+                  }
+                }
+                if (message.serverContent?.interrupted) {
+                  clientWs.send(JSON.stringify({ interrupted: true }));
+                }
+              },
+            },
+            config: {
+              responseModalities: ['AUDIO' as any],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
+              systemInstruction: "أنت المساعد الرقمي لمنصة 'موري توب' (Mouri Top). ساعد المستخدمين بوضوح وود في استفساراتهم المتعلقة بالخدمات الرقمية وشحن الألعاب. وسائل الدفع المتاحة حالياً هي بنكيلي وسداد فقط؛ PayPal غير متاح بعد.",
+            },
+          });
+  
+          if (closed || clientWs.readyState !== 1) {
+            cleanup();
+            return;
+          }
+          clientWs.send(JSON.stringify({ authenticated: true, ready: true }));
+  
+          clientWs.on('message', (data: any) => {
+            try {
+              const now = Date.now();
+              if (now - frameWindowStart >= 10_000) {
+                frameWindowStart = now;
+                frameCount = 0;
+              }
+              frameCount += 1;
+              if (frameCount > 240) {
+                closeSocket(4429, 'Audio message rate exceeded');
+                cleanup();
+                return;
+              }
+              const audioMessage = JSON.parse(data.toString());
+              if (typeof audioMessage?.audio !== 'string' || audioMessage.audio.length > 48_000) return;
+              liveSession?.sendRealtimeInput({ audio: { data: audioMessage.audio, mimeType: 'audio/pcm;rate=16000' } });
+            } catch {
+              // Ignore malformed client frames without logging audio or token data.
+            }
+          });
+        } catch {
+          closeSocket(4401, 'Invalid authentication or session setup failed');
+        }
+      });
     });
-  });
-
-  // Vite middleware
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ 
-      server: { middlewareMode: true, hmr: false }, 
-      appType: "spa" 
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  server.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
+  if (!serverless) {
+    // Vite middleware / static SPA serving is used by the standalone local server.
+    if (process.env.NODE_ENV !== "production") {
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*all', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    }
+
+    server?.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
+  }
+
+  return app;
 }
 
-startServer();
+// Vercel's /api/[...path] function imports this Express application. Initialize
+// the route table once per warm function instance and reuse it for later calls.
+let vercelAppPromise: Promise<express.Express> | null = null;
+const vercelApp = express();
+vercelApp.use((req, res, next) => {
+  if (!vercelAppPromise) {
+    vercelAppPromise = startServer({ serverless: true });
+  }
+  vercelAppPromise
+    .then((application) => application(req, res, next))
+    .catch(next);
+});
+
+export default vercelApp;
+
+// Preserve the current local development workflow: npm run dev starts the
+// Vite middleware server and its optional /live WebSocket endpoint.
+if (process.env.VERCEL !== "1") {
+  void startServer().catch((error) => {
+    console.error("Failed to start MauriTop server:", error);
+    process.exitCode = 1;
+  });
+}
